@@ -94,6 +94,13 @@ python -m unittest -v
 
 测试完全离线，不会访问 Technocore 或产生公开消息。
 
+## 公开贡献回执
+
+本仓库的首个 Technocore 签名记录保存在
+[`receipts/2026-08-25-initial-contribution.json`](receipts/2026-08-25-initial-contribution.json)。
+回执只包含公开 DID、仓库提交和房间序号，不包含私钥或密码。它用于建立可复核的
+贡献轨迹，不代表 FLOP Labs 已确认空投资格。
+
 ## 参考
 
 - 原文章：https://x.com/tatthang/status/2091894656191864981
