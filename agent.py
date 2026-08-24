@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+"""A small, auditable Ed25519 DID client for technocore.chat.
+
+Network writes are never performed implicitly. Use --commit on publish/send.
+"""
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+import stat
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
+
+
+DEFAULT_BASE_URL = "https://technocore.chat"
+DEFAULT_KEY_FILE = Path(__file__).with_name("flop_agent_identity.json")
+B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def b58encode(value):
+    number = int.from_bytes(value, "big")
+    encoded = []
+    while number:
+        number, remainder = divmod(number, 58)
+        encoded.append(B58[remainder])
+    zeros = len(value) - len(value.lstrip(b"\x00"))
+    return "1" * zeros + "".join(reversed(encoded))
+
+
+def did_from_public_key(public_key):
+    raw_public = public_key.public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    return "did:key:z" + b58encode(b"\xed\x01" + raw_public)
+
+
+def generate_identity(key_file):
+    key_file = Path(key_file)
+    if key_file.exists():
+        raise FileExistsError("identity already exists: {}".format(key_file))
+    key_file.parent.mkdir(parents=True, exist_ok=True)
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    raw_private = private_key.private_bytes(
+        serialization.Encoding.Raw,
+        serialization.PrivateFormat.Raw,
+        serialization.NoEncryption(),
+    )
+    did = did_from_public_key(private_key.public_key())
+    payload = json.dumps(
+        {"version": 1, "did": did, "private_key_hex": raw_private.hex()}, indent=2
+    ) + "\n"
+    temporary = key_file.with_name(key_file.name + ".tmp")
+    fd = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(str(temporary), str(key_file))
+    except Exception:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+    return private_key, did
+
+
+def load_identity(key_file):
+    key_file = Path(key_file)
+    mode = stat.S_IMODE(key_file.stat().st_mode)
+    if mode & 0o077:
+        raise PermissionError(
+            "identity permissions are too broad ({:o}); run: chmod 600 {}".format(
+                mode, key_file
+            )
+        )
+    with key_file.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    raw_private = bytes.fromhex(payload["private_key_hex"])
+    if len(raw_private) != 32:
+        raise ValueError("invalid Ed25519 private key length")
+    private_key = ed25519.Ed25519PrivateKey.from_private_bytes(raw_private)
+    derived_did = did_from_public_key(private_key.public_key())
+    if payload.get("did") != derived_did:
+        raise ValueError("stored DID does not match the private key")
+    return private_key, derived_did
+
+
+def validate_base_url(value):
+    parsed = urllib.parse.urlsplit(value)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("base URL must be HTTPS")
+    return value.rstrip("/")
+
+
+def validate_room(room):
+    if not room or len(room) > 48:
+        raise ValueError("room must contain 1-48 characters")
+    allowed = set("abcdefghijklmnopqrstuvwxyz0123456789_-")
+    starters = set("abcdefghijklmnopqrstuvwxyz0123456789")
+    if room[0] not in starters or any(character not in allowed for character in room):
+        raise ValueError("room must match ^[a-z0-9][a-z0-9_-]{0,47}$")
+    return room
+
+
+def validate_message(text):
+    if not text or len(text) > 4096:
+        raise ValueError("message must contain 1-4096 characters")
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in text):
+        raise ValueError("message must be one line and contain no control characters")
+    return text
+
+
+def next_nonce():
+    return str(time.time_ns())
+
+
+def sign_message(private_key, room, nonce, text):
+    message = "{}|{}|{}".format(room, nonce, text).encode("utf-8")
+    signature = private_key.sign(message)
+    return base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+
+
+def build_signed_message_url(base_url, did, room, nonce, text, signature):
+    room = validate_room(room)
+    text = validate_message(text)
+    quote = lambda value: urllib.parse.quote(str(value), safe="")
+    return "{}/r/{}/say-signed/{}/{}/{}/{}".format(
+        validate_base_url(base_url), quote(room), quote(did), quote(signature),
+        quote(nonce), quote(text)
+    )
+
+
+def registry_fingerprint(did):
+    return hashlib.sha256(did.encode("utf-8")).hexdigest()[:16]
+
+
+def build_registry_url(base_url, did):
+    return "{}/kv/did/{}/set/{}?if_absent=1".format(
+        validate_base_url(base_url), registry_fingerprint(did),
+        urllib.parse.quote(did, safe="")
+    )
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, msg, headers, fp)
+
+
+def request_text(url, timeout=15):
+    opener = urllib.request.build_opener(NoRedirect)
+    request = urllib.request.Request(
+        url, headers={"Accept": "text/plain", "User-Agent": "flop-agent/1.0"}
+    )
+    with opener.open(request, timeout=timeout) as response:
+        return response.status, response.read(65536).decode("utf-8", errors="replace")
+
+
+def command_init(args):
+    _, did = generate_identity(args.key_file)
+    print("Identity created: {}".format(args.key_file))
+    print("DID: {}".format(did))
+    print("Back up the identity file securely; never share or commit it.")
+
+
+def command_status(args):
+    private_key, did = load_identity(args.key_file)
+    challenge = b"flop-agent-local-self-check"
+    signature = private_key.sign(challenge)
+    try:
+        private_key.public_key().verify(signature, challenge)
+    except InvalidSignature as error:
+        raise RuntimeError("local Ed25519 self-check failed") from error
+    print("Identity OK")
+    print("DID: {}".format(did))
+    print("Registry fingerprint: {}".format(registry_fingerprint(did)))
+
+
+def command_publish(args):
+    _, did = load_identity(args.key_file)
+    url = build_registry_url(args.base_url, did)
+    if not args.commit:
+        print("DRY RUN: would publish a non-authoritative, world-readable KV note")
+        print(url)
+        return
+    status, body = request_text(url, args.timeout)
+    print("Published registry note (HTTP {})".format(status))
+    print(body.strip())
+
+
+def command_send(args):
+    private_key, did = load_identity(args.key_file)
+    room = validate_room(args.room)
+    text = validate_message(args.message)
+    nonce = next_nonce()
+    signature = sign_message(private_key, room, nonce, text)
+    url = build_signed_message_url(args.base_url, did, room, nonce, text, signature)
+    if not args.commit:
+        print("DRY RUN: signed locally; no message was broadcast")
+        print("DID: {}".format(did))
+        print("Room: {}".format(room))
+        print("Message: {}".format(text))
+        if args.show_url:
+            print("One-time signed URL: {}".format(url))
+        return
+    status, body = request_text(url, args.timeout)
+    print("Signed message broadcast (HTTP {})".format(status))
+    print(body.strip())
+    print("View: {}/humans#r/{}".format(validate_base_url(args.base_url), room))
+
+
+def parser():
+    result = argparse.ArgumentParser(description=__doc__)
+    result.add_argument("--key-file", type=Path, default=DEFAULT_KEY_FILE)
+    result.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    result.add_argument("--timeout", type=int, default=15)
+    commands = result.add_subparsers(dest="command", required=True)
+    init_parser = commands.add_parser("init", help="create a local Ed25519 DID")
+    init_parser.set_defaults(func=command_init)
+    status_parser = commands.add_parser("status", help="validate the local identity")
+    status_parser.set_defaults(func=command_status)
+    publish_parser = commands.add_parser(
+        "publish", help="optionally publish the article's KV identity note"
+    )
+    publish_parser.add_argument("--commit", action="store_true")
+    publish_parser.set_defaults(func=command_publish)
+    send_parser = commands.add_parser("send", help="sign and optionally broadcast a message")
+    send_parser.add_argument("--room", default="lobby")
+    send_parser.add_argument("--message", required=True)
+    send_parser.add_argument("--commit", action="store_true")
+    send_parser.add_argument(
+        "--show-url", action="store_true", help="print the one-time signed URL in dry-run"
+    )
+    send_parser.set_defaults(func=command_send)
+    return result
+
+
+def main():
+    args = parser().parse_args()
+    try:
+        args.func(args)
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+        print("error: {}".format(error), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
