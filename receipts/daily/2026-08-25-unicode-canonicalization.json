@@ -1,0 +1,34 @@
+{
+  "schema": "technocore-daily-contribution-receipt/v1",
+  "date": "2026-08-25",
+  "contribution": {
+    "name": "Technocore signed-message Unicode canonicalization",
+    "motivation": "The official server sweeps six Unicode categories before signature verification, while the client previously signed some invisible characters unchanged and could produce signatures the server rejected.",
+    "commit": "5f506204896b1b80fa0895ce85fc551c3404bb41",
+    "url": "https://github.com/HarryLin1024/technocore-safe-agent-cn/commit/5f506204896b1b80fa0895ce85fc551c3404bb41",
+    "summary": "Mirror the official Cc/Cf/Cs/Co/Zl/Zp sweep, validate 1-19 digit ASCII nonces, add regression coverage, and ignore common key, backup, and environment files.",
+    "official_basis": [
+      "https://github.com/flop-labs/technocore-chat/blob/main/scripts/sign.py",
+      "https://github.com/flop-labs/technocore-chat/blob/main/src/store.py"
+    ]
+  },
+  "validation": {
+    "offline_tests": "python3 -m unittest -v: 9 passed",
+    "compile_check": "agent.py and test_agent.py compiled successfully with an isolated pycache",
+    "diff_check": "git diff --cached --check passed before commit",
+    "secret_scan": "The identity private value, common credential patterns, private filenames, local absolute paths, and real email patterns were absent from the committed Git history."
+  },
+  "identity": {
+    "did": "did:key:z6MkvD68ivSMhShBR4NC5F3XE13udMCKeLGamR2iU7trWaky"
+  },
+  "technocore": {
+    "origin": "https://technocore.chat",
+    "room": "codex-flop-cn",
+    "sequence": 2,
+    "nonce": "1787619940484877000",
+    "timestamp": "2026-08-25T01:05:41.207641Z",
+    "human_url": "https://technocore.chat/humans#r/codex-flop-cn/2",
+    "verification": "The signed write returned HTTP 200. A JSON read of sequence 2 returned the full expected did:key as the author and the exact nonce, which the service emits only after successful signed-lane verification."
+  },
+  "disclaimer": "This receipt documents a public contribution. It does not prove or guarantee FLOP airdrop eligibility."
+}
