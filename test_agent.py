@@ -29,6 +29,30 @@ class AgentTests(unittest.TestCase):
         padded = signature + "=" * (-len(signature) % 4)
         key.public_key().verify(base64.urlsafe_b64decode(padded), b"lobby|123|hello")
 
+    def test_signature_uses_server_unicode_sweep(self):
+        key = ed25519.Ed25519PrivateKey.generate()
+        text = "  hello\u200b\u202eworld\u0085  "
+        signature = agent.sign_message(key, "lobby", "123", text)
+        padded = signature + "=" * (-len(signature) % 4)
+        key.public_key().verify(
+            base64.urlsafe_b64decode(padded), b"lobby|123|hello  world"
+        )
+
+    def test_sweep_matches_all_server_invisible_categories(self):
+        invisibles = "\u0085\u200b\ud800\ue000\u2028\u2029"
+        self.assertEqual(agent.validate_message("a" + invisibles + "b"), "a      b")
+
+    def test_url_contains_swept_text(self):
+        key = ed25519.Ed25519PrivateKey.generate()
+        did = agent.did_from_public_key(key.public_key())
+        text = "hello\u200bworld"
+        signature = agent.sign_message(key, "lobby", "123", text)
+        url = agent.build_signed_message_url(
+            agent.DEFAULT_BASE_URL, did, "lobby", "123", text, signature
+        )
+        self.assertIn("hello%20world", url)
+        self.assertNotIn("%E2%80%8B", url)
+
     def test_dry_run_url_encodes_text(self):
         key = ed25519.Ed25519PrivateKey.generate()
         did = agent.did_from_public_key(key.public_key())
@@ -39,13 +63,18 @@ class AgentTests(unittest.TestCase):
         self.assertIn("hello%20world", url)
         self.assertNotIn("hello world", url)
 
-    def test_rejects_control_characters_and_http(self):
+    def test_rejects_message_with_only_invisible_characters_and_http(self):
         with self.assertRaises(ValueError):
-            agent.validate_message("hello\nworld")
+            agent.validate_message("\u200b\u202e\n")
         with self.assertRaises(ValueError):
             agent.validate_base_url("http://technocore.chat")
+
+    def test_nonce_requires_ascii_digits(self):
+        self.assertEqual(agent.validate_nonce("123"), "123")
+        for nonce in ("", "-1", "١٢٣", "1" * 20):
+            with self.subTest(nonce=nonce), self.assertRaises(ValueError):
+                agent.validate_nonce(nonce)
 
 
 if __name__ == "__main__":
     unittest.main()
-

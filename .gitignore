@@ -3,4 +3,15 @@ __pycache__/
 *.pyc
 flop_agent_identity.json
 flop_agent_identity.json.tmp
-
+flop_agent_identity.json.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.age
+*.gpg
+*.enc
+*.backup
+*.bak
+.env
+.env.*

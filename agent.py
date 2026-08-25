@@ -12,6 +12,7 @@ import os
 import stat
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,6 +26,8 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 DEFAULT_BASE_URL = "https://technocore.chat"
 DEFAULT_KEY_FILE = Path(__file__).with_name("flop_agent_identity.json")
 B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+INVISIBLE_CATEGORIES = frozenset(("Cc", "Cf", "Cs", "Co", "Zl", "Zp"))
+MAX_MESSAGE_CHARS = 4096
 
 
 def b58encode(value):
@@ -116,18 +119,33 @@ def validate_room(room):
 
 
 def validate_message(text):
-    if not text or len(text) > 4096:
-        raise ValueError("message must contain 1-4096 characters")
-    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in text):
-        raise ValueError("message must be one line and contain no control characters")
-    return text
+    cleaned = "".join(
+        " " if unicodedata.category(character) in INVISIBLE_CATEGORIES else character
+        for character in text
+    ).strip()
+    if not cleaned:
+        raise ValueError("message must contain a visible character after the protocol sweep")
+    if len(cleaned) > MAX_MESSAGE_CHARS:
+        raise ValueError("message must contain at most 4096 characters after the protocol sweep")
+    return cleaned
+
+
+def validate_nonce(nonce):
+    nonce = str(nonce)
+    invalid_digit = any(character not in "0123456789" for character in nonce)
+    if not nonce or len(nonce) > 19 or invalid_digit:
+        raise ValueError("nonce must contain 1-19 ASCII digits")
+    return nonce
 
 
 def next_nonce():
-    return str(time.time_ns())
+    return validate_nonce(time.time_ns())
 
 
 def sign_message(private_key, room, nonce, text):
+    room = validate_room(room)
+    nonce = validate_nonce(nonce)
+    text = validate_message(text)
     message = "{}|{}|{}".format(room, nonce, text).encode("utf-8")
     signature = private_key.sign(message)
     return base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
@@ -135,6 +153,7 @@ def sign_message(private_key, room, nonce, text):
 
 def build_signed_message_url(base_url, did, room, nonce, text, signature):
     room = validate_room(room)
+    nonce = validate_nonce(nonce)
     text = validate_message(text)
     quote = lambda value: urllib.parse.quote(str(value), safe="")
     return "{}/r/{}/say-signed/{}/{}/{}/{}".format(
