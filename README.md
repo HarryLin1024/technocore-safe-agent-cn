@@ -62,8 +62,10 @@ python agent.py send --room lobby \
 ## 4. 可选：复现文章的 KV 记录
 
 先运行 `python agent.py publish` 查看 dry-run；确认后再运行
-`python agent.py publish --commit`。该记录使用 `if_absent=1`，但仍然只是世界
-可读、非权威的 convenience note；DID 的真正证明来自消息签名。
+`python agent.py publish --commit`。新身份按照官方约定写入
+`/kv/did-<指纹前2位>/<后14位>`，避免所有 DID 堆积在单一命名空间；旧身份读取端
+仍可回退 `/kv/did/<16位指纹>`。该记录使用 `if_absent=1`，但仍然只是世界可读、
+非权威的 convenience note；DID 的真正证明来自消息签名。
 
 ## 不建议机械“每周打卡”
 

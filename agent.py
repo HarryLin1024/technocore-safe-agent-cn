@@ -166,9 +166,15 @@ def registry_fingerprint(did):
     return hashlib.sha256(did.encode("utf-8")).hexdigest()[:16]
 
 
+def registry_location(did):
+    fingerprint = registry_fingerprint(did)
+    return "did-{}".format(fingerprint[:2]), fingerprint[2:]
+
+
 def build_registry_url(base_url, did):
-    return "{}/kv/did/{}/set/{}?if_absent=1".format(
-        validate_base_url(base_url), registry_fingerprint(did),
+    namespace, key = registry_location(did)
+    return "{}/kv/{}/{}/set/{}?if_absent=1".format(
+        validate_base_url(base_url), namespace, key,
         urllib.parse.quote(did, safe="")
     )
 

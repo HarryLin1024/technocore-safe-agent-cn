@@ -75,6 +75,17 @@ class AgentTests(unittest.TestCase):
             with self.subTest(nonce=nonce), self.assertRaises(ValueError):
                 agent.validate_nonce(nonce)
 
+    def test_registry_url_uses_official_sharded_identity_path(self):
+        did = "did:key:z6MkExample"
+        self.assertEqual(agent.registry_fingerprint(did), "beac80774be09b62")
+        self.assertEqual(agent.registry_location(did), ("did-be", "ac80774be09b62"))
+        self.assertEqual(
+            agent.build_registry_url(agent.DEFAULT_BASE_URL, did),
+            "https://technocore.chat/kv/did-be/ac80774be09b62/set/"
+            "did%3Akey%3Az6MkExample?if_absent=1",
+        )
+        self.assertNotIn("/kv/did/", agent.build_registry_url(agent.DEFAULT_BASE_URL, did))
+
 
 if __name__ == "__main__":
     unittest.main()
