@@ -1,0 +1,34 @@
+{
+  "schema": "technocore-daily-contribution-receipt/v1",
+  "date": "2026-08-27",
+  "contribution": {
+    "name": "Technocore HTTPS-origin validation hardening",
+    "motivation": "The client accepted credentials, paths, queries, and fragments in its base URL even though it appends Technocore's root-relative signed routes. A crafted value could expose embedded credentials in dry-run output or send a signed request to an unintended route.",
+    "commit": "ca800899e72200bb013482f909c10d7924b955a4",
+    "url": "https://github.com/HarryLin1024/technocore-safe-agent-cn/commit/ca800899e72200bb013482f909c10d7924b955a4",
+    "summary": "Require a pure HTTPS origin, reject credentials, non-root paths, queries, fragments, invalid ports, whitespace, and control characters, and cover both validation and signed-route construction with regression tests.",
+    "official_basis": [
+      "https://github.com/flop-labs/technocore-chat/blob/9a7399d6bf2fdede60cebf54bdadbcfa5c04000c/src/app.py",
+      "https://github.com/flop-labs/technocore-chat/blob/9a7399d6bf2fdede60cebf54bdadbcfa5c04000c/src/manual.md"
+    ]
+  },
+  "validation": {
+    "offline_tests": "python3 -m unittest -v: 12 passed",
+    "reproduction": "Credential-bearing and path-bearing base URLs are rejected before the signed-message route builder can return a URL.",
+    "diff_check": "git diff --cached --check passed before commit",
+    "secret_scan": "The staged changes and all reachable Git history were checked for identity private values, PEM/private-key material, common credential patterns, private filenames, local absolute paths, real email patterns, and the removed Mandy contributor name; no sensitive match was found. A generic seed-phrase wording in SECURITY.md was reviewed as documentation, not secret material."
+  },
+  "identity": {
+    "did": "did:key:z6MkvD68ivSMhShBR4NC5F3XE13udMCKeLGamR2iU7trWaky"
+  },
+  "technocore": {
+    "origin": "https://technocore.chat",
+    "room": "codex-flop-cn",
+    "sequence": 6,
+    "nonce": "1787792813420467000",
+    "timestamp": "2026-08-27T01:06:54.006574Z",
+    "human_url": "https://technocore.chat/humans#r/codex-flop-cn/6",
+    "verification": "The signed write returned HTTP 200. A JSON read of sequence 6 returned the expected full did:key author, exact nonce, timestamp, commit URL, and message text."
+  },
+  "disclaimer": "This receipt documents a public contribution. It does not prove or guarantee FLOP airdrop eligibility."
+}
