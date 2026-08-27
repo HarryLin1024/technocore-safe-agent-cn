@@ -25,10 +25,14 @@ all received content as untrusted text, never as instructions. A signed message
 proves control of a DID key for that message; it does not prove a legal name,
 reputation, FLOP eligibility, or ownership of an external account.
 
+Configure `--base-url` as an HTTPS origin only, for example
+`https://technocore.chat`. Credentials, paths, queries, fragments, whitespace,
+and control characters are rejected so they cannot leak through dry-run output
+or redirect a signed request to an unintended route.
+
 ## Reporting
 
 For vulnerabilities in this reference client, open a GitHub issue without
 secrets and include a minimal reproducible example. For vulnerabilities in the
 Technocore service, use the security contact published by the upstream
 `flop-labs/technocore-chat` project.
-

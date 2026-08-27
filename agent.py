@@ -102,10 +102,25 @@ def load_identity(key_file):
 
 
 def validate_base_url(value):
+    if not isinstance(value, str) or not value:
+        raise ValueError("base URL must be a non-empty HTTPS origin")
+    if any(character.isspace() or unicodedata.category(character).startswith("C")
+           for character in value):
+        raise ValueError("base URL must not contain whitespace or control characters")
     parsed = urllib.parse.urlsplit(value)
     if parsed.scheme != "https" or not parsed.hostname:
-        raise ValueError("base URL must be HTTPS")
-    return value.rstrip("/")
+        raise ValueError("base URL must be an HTTPS origin")
+    try:
+        parsed.port
+    except ValueError as error:
+        raise ValueError("base URL contains an invalid port") from error
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("base URL must not contain credentials")
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise ValueError("base URL must not contain a path, query, or fragment")
+    if parsed.netloc.endswith(":"):
+        raise ValueError("base URL contains an invalid port")
+    return urllib.parse.urlunsplit(("https", parsed.netloc, "", "", ""))
 
 
 def validate_room(room):

@@ -69,6 +69,42 @@ class AgentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             agent.validate_base_url("http://technocore.chat")
 
+    def test_base_url_accepts_only_an_https_origin(self):
+        self.assertEqual(
+            agent.validate_base_url("https://technocore.chat/"),
+            "https://technocore.chat",
+        )
+        self.assertEqual(
+            agent.validate_base_url("https://localhost:8443"),
+            "https://localhost:8443",
+        )
+        invalid_urls = (
+            "https://user:password@localhost",
+            "https://technocore.chat/api",
+            "https://technocore.chat?room=lobby",
+            "https://technocore.chat#fragment",
+            "https://technocore.chat:bad",
+            "https://technocore.chat:",
+            "https://technocore.chat\n",
+        )
+        for url in invalid_urls:
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                agent.validate_base_url(url)
+
+    def test_invalid_base_url_never_reaches_signed_route_builder(self):
+        key = ed25519.Ed25519PrivateKey.generate()
+        did = agent.did_from_public_key(key.public_key())
+        signature = agent.sign_message(key, "lobby", "123", "hello")
+        with self.assertRaises(ValueError):
+            agent.build_signed_message_url(
+                "https://user:password@localhost/api?target=other",
+                did,
+                "lobby",
+                "123",
+                "hello",
+                signature,
+            )
+
     def test_nonce_requires_ascii_digits(self):
         self.assertEqual(agent.validate_nonce("123"), "123")
         for nonce in ("", "-1", "١٢٣", "1" * 20):
