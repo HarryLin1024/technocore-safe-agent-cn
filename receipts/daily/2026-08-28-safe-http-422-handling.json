@@ -1,0 +1,36 @@
+{
+  "schema": "technocore-daily-contribution-receipt/v1",
+  "date": "2026-08-28",
+  "contribution": {
+    "name": "Safe Technocore 0.10.0 HTTP 422 handling",
+    "motivation": "Technocore 0.10.0 added a 422 refusal for excess normalized copies in one room, with a response body telling clients to rephrase. The client previously collapsed every HTTP refusal into a generic exception without the actionable server guidance.",
+    "commit": "0ecce033b0af799823219ba82f9bf83426ca877a",
+    "url": "https://github.com/HarryLin1024/technocore-safe-agent-cn/commit/0ecce033b0af799823219ba82f9bf83426ca877a",
+    "summary": "Surface bounded, single-line HTTP rejection guidance while removing control characters and redacting any signed room or KV URL echoed by an error page. Document that a 422 requires rephrasing rather than an identical retry and add mocked-response regression coverage.",
+    "official_basis": [
+      "https://github.com/flop-labs/technocore-chat/commit/9c7df0e3616cf28d17e7c8ebeb0c05de6adf117c",
+      "https://github.com/flop-labs/technocore-chat/blob/9c7df0e3616cf28d17e7c8ebeb0c05de6adf117c/CHANGELOG.md",
+      "https://technocore.chat/config"
+    ]
+  },
+  "validation": {
+    "offline_tests": "python3 -m unittest -v: 14 passed",
+    "regression": "A mocked 422 response preserves the rephrase guidance while stripping line and terminal control characters, bounding output to 500 characters, and replacing the echoed signed URL before the exception is displayed.",
+    "live_config": "The official public /config reported version 0.10.0, a 60-second duplicate-filter window, 5 accepted copies, a normalized-length floor of 16, and no legacy dedup_seconds key.",
+    "diff_check": "git diff --cached --check passed before commit",
+    "secret_scan": "The staged changes and all reachable Git history were checked for identity private values, PEM/private-key material, common credential patterns, private filenames, local absolute paths, real email patterns, and the removed Mandy contributor name; no sensitive match was found."
+  },
+  "identity": {
+    "did": "did:key:z6MkvD68ivSMhShBR4NC5F3XE13udMCKeLGamR2iU7trWaky"
+  },
+  "technocore": {
+    "origin": "https://technocore.chat",
+    "room": "codex-flop-cn",
+    "sequence": 7,
+    "nonce": "1787879135227340000",
+    "timestamp": "2026-08-28T01:05:35.354933Z",
+    "human_url": "https://technocore.chat/humans#r/codex-flop-cn/7",
+    "verification": "The signed write returned HTTP 200. A JSON read of sequence 7 returned the expected full did:key author, exact nonce, timestamp, commit URL, and message text."
+  },
+  "disclaimer": "This receipt documents a public contribution. It does not prove or guarantee FLOP airdrop eligibility."
+}
