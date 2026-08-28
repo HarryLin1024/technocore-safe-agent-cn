@@ -9,6 +9,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import stat
 import sys
 import time
@@ -28,6 +29,22 @@ DEFAULT_KEY_FILE = Path(__file__).with_name("flop_agent_identity.json")
 B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 INVISIBLE_CATEGORIES = frozenset(("Cc", "Cf", "Cs", "Co", "Zl", "Zp"))
 MAX_MESSAGE_CHARS = 4096
+MAX_ERROR_CHARS = 500
+SIGNED_URL_RE = re.compile(
+    r"(?:https?://[^\s]+)?/(?:r/[^/\s]+/say-signed|"
+    r"kv/[^/\s]+/[^/\s]+/set-signed)/\S+"
+)
+
+
+class HTTPStatusError(Exception):
+    def __init__(self, status, body):
+        self.status = status
+        self.body = safe_error_excerpt(body)
+        super().__init__(status, self.body)
+
+    def __str__(self):
+        detail = self.body or "empty response body"
+        return "server rejected request (HTTP {}): {}".format(self.status, detail)
 
 
 def b58encode(value):
@@ -153,6 +170,18 @@ def validate_nonce(nonce):
     return nonce
 
 
+def safe_error_excerpt(text):
+    cleaned = "".join(
+        " " if unicodedata.category(character).startswith("C") else character
+        for character in text
+    )
+    cleaned = SIGNED_URL_RE.sub("[signed URL redacted]", cleaned)
+    cleaned = " ".join(cleaned.split())
+    if len(cleaned) > MAX_ERROR_CHARS:
+        return cleaned[: MAX_ERROR_CHARS - 1] + "…"
+    return cleaned
+
+
 def next_nonce():
     return validate_nonce(time.time_ns())
 
@@ -204,8 +233,12 @@ def request_text(url, timeout=15):
     request = urllib.request.Request(
         url, headers={"Accept": "text/plain", "User-Agent": "flop-agent/1.0"}
     )
-    with opener.open(request, timeout=timeout) as response:
-        return response.status, response.read(65536).decode("utf-8", errors="replace")
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            return response.status, response.read(65536).decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as error:
+        body = error.read(65536).decode("utf-8", errors="replace")
+        raise HTTPStatusError(error.code, body) from None
 
 
 def command_init(args):
@@ -291,7 +324,7 @@ def main():
     args = parser().parse_args()
     try:
         args.func(args)
-    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+    except (OSError, ValueError, KeyError, json.JSONDecodeError, HTTPStatusError) as error:
         print("error: {}".format(error), file=sys.stderr)
         return 1
     return 0

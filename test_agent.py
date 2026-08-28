@@ -1,7 +1,10 @@
 import base64
+import io
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest import mock
 
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
@@ -121,6 +124,37 @@ class AgentTests(unittest.TestCase):
             "did%3Akey%3Az6MkExample?if_absent=1",
         )
         self.assertNotIn("/kv/did/", agent.build_registry_url(agent.DEFAULT_BASE_URL, did))
+
+    def test_http_422_surfaces_safe_guidance_without_the_signed_url(self):
+        signed_url = (
+            "https://localhost/r/lobby/say-signed/"
+            "did:key:z6MkExample/opaque-signature/123/duplicate"
+        )
+        response = io.BytesIO(
+            (
+                "422 duplicate text\nrephrase instead of retrying\u001b[31m\n"
+                "echo: " + signed_url
+            ).encode("utf-8")
+        )
+        rejected = urllib.error.HTTPError(
+            signed_url, 422, "Unprocessable Content", {}, response
+        )
+        opener = mock.Mock()
+        opener.open.side_effect = rejected
+        with mock.patch("agent.urllib.request.build_opener", return_value=opener):
+            with self.assertRaises(agent.HTTPStatusError) as caught:
+                agent.request_text(signed_url)
+        self.assertEqual(caught.exception.status, 422)
+        self.assertIn("rephrase instead of retrying", str(caught.exception))
+        self.assertIn("[signed URL redacted]", str(caught.exception))
+        self.assertNotIn("opaque-signature", str(caught.exception))
+        self.assertNotIn("\n", str(caught.exception))
+        self.assertNotIn("\u001b", str(caught.exception))
+
+    def test_error_excerpt_is_bounded(self):
+        excerpt = agent.safe_error_excerpt("x" * (agent.MAX_ERROR_CHARS + 20))
+        self.assertEqual(len(excerpt), agent.MAX_ERROR_CHARS)
+        self.assertTrue(excerpt.endswith("…"))
 
 
 if __name__ == "__main__":
