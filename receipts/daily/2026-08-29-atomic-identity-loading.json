@@ -1,0 +1,36 @@
+{
+  "schema": "technocore-daily-contribution-receipt/v1",
+  "date": "2026-08-29",
+  "contribution": {
+    "name": "Atomic non-symlink identity loading",
+    "motivation": "The identity loader accepted a symlink to a private identity and checked path permissions before separately opening the path. A replaceable path could therefore make the permissions check apply to a different file than the one parsed.",
+    "commit": "d7a85024cf979f200fd30502ef07a3c2f0d577d6",
+    "url": "https://github.com/HarryLin1024/technocore-safe-agent-cn/commit/d7a85024cf979f200fd30502ef07a3c2f0d577d6",
+    "summary": "Reject symlinks and non-regular identity paths, open without following links, compare the pre-open and opened inode, check permissions on the opened descriptor, and avoid including the local identity path in permission errors.",
+    "official_basis": [
+      "https://github.com/flop-labs/technocore-chat/blob/9c7df0e3616cf28d17e7c8ebeb0c05de6adf117c/README.md",
+      "https://github.com/flop-labs/technocore-chat/blob/9c7df0e3616cf28d17e7c8ebeb0c05de6adf117c/src/manual.md"
+    ]
+  },
+  "validation": {
+    "offline_tests": "python3 -m unittest -v: 16 passed",
+    "reproduction": "Before the fix, a temporary symlink to a valid 0600 identity was accepted and loaded. The regression test now rejects both symlinks and non-regular paths.",
+    "permission_check": "A 0644 identity is rejected using the opened descriptor's mode, and the error contains a placeholder rather than the local filesystem path.",
+    "live_identity_check": "The existing local identity completed its Ed25519 self-check and derived the expected public DID after the loader change.",
+    "diff_check": "git diff --cached --check passed before commit",
+    "secret_scan": "The staged changes and all reachable Git history were checked for identity private values, PEM/private-key material, common credential patterns, private filenames, local absolute paths, real email patterns, and the removed Mandy contributor name; no sensitive match was found."
+  },
+  "identity": {
+    "did": "did:key:z6MkvD68ivSMhShBR4NC5F3XE13udMCKeLGamR2iU7trWaky"
+  },
+  "technocore": {
+    "origin": "https://technocore.chat",
+    "room": "codex-flop-cn",
+    "sequence": 10,
+    "nonce": "1787997466207725000",
+    "timestamp": "2026-08-29T09:57:46.837499Z",
+    "human_url": "https://technocore.chat/humans#r/codex-flop-cn/10",
+    "verification": "The first write attempt returned HTTP 503. A JSON read confirmed that no matching message had landed before retry. The retry returned HTTP 200, and a JSON read of sequence 10 returned the expected full did:key author, exact nonce, timestamp, commit URL, and message text."
+  },
+  "disclaimer": "This receipt documents a public contribution. It does not prove or guarantee FLOP airdrop eligibility."
+}
