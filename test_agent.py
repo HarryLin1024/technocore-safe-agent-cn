@@ -26,6 +26,29 @@ class AgentTests(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(agent.did_from_public_key(private_key.public_key()), loaded_did)
 
+    def test_identity_loader_rejects_symlinks_and_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "identity.json"
+            alias = root / "identity-link.json"
+            agent.generate_identity(target)
+            alias.symlink_to(target)
+            for path in (alias, root):
+                with self.subTest(path=path), self.assertRaisesRegex(
+                    ValueError, "regular, non-symlink"
+                ):
+                    agent.load_identity(path)
+
+    def test_identity_permissions_are_checked_without_logging_the_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "identity.json"
+            agent.generate_identity(path)
+            path.chmod(0o644)
+            with self.assertRaises(PermissionError) as caught:
+                agent.load_identity(path)
+            self.assertIn("chmod 600 <identity-file>", str(caught.exception))
+            self.assertNotIn(str(path), str(caught.exception))
+
     def test_signature_is_protocol_compatible(self):
         key = ed25519.Ed25519PrivateKey.generate()
         signature = agent.sign_message(key, "lobby", "123", "hello")

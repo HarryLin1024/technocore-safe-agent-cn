@@ -6,6 +6,7 @@ Network writes are never performed implicitly. Use --commit on publish/send.
 
 import argparse
 import base64
+import errno
 import hashlib
 import json
 import os
@@ -99,15 +100,37 @@ def generate_identity(key_file):
 
 def load_identity(key_file):
     key_file = Path(key_file)
-    mode = stat.S_IMODE(key_file.stat().st_mode)
-    if mode & 0o077:
-        raise PermissionError(
-            "identity permissions are too broad ({:o}); run: chmod 600 {}".format(
-                mode, key_file
+    initial = key_file.lstat()
+    if not stat.S_ISREG(initial.st_mode):
+        raise ValueError("identity file must be a regular, non-symlink file")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = None
+    try:
+        try:
+            descriptor = os.open(str(key_file), flags)
+        except OSError as error:
+            if error.errno == errno.ELOOP:
+                raise ValueError(
+                    "identity file must be a regular, non-symlink file"
+                ) from None
+            raise
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or (
+            initial.st_dev, initial.st_ino
+        ) != (opened.st_dev, opened.st_ino):
+            raise ValueError("identity file changed while it was being opened")
+        mode = stat.S_IMODE(opened.st_mode)
+        if mode & 0o077:
+            raise PermissionError(
+                "identity permissions are too broad ({:o}); run: chmod 600 "
+                "<identity-file>".format(mode)
             )
-        )
-    with key_file.open(encoding="utf-8") as handle:
-        payload = json.load(handle)
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            descriptor = None
+            payload = json.load(handle)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     raw_private = bytes.fromhex(payload["private_key_hex"])
     if len(raw_private) != 32:
         raise ValueError("invalid Ed25519 private key length")

@@ -14,6 +14,11 @@ git diff --cached --name-only
 git ls-files "*identity*" "*.pem" "*.key"
 ```
 
+The client refuses identity symlinks and non-regular files. It opens a regular
+identity without following links, then checks the opened descriptor's inode and
+permissions before parsing it. Keep the identity in a directory that other users
+cannot modify; file checks do not make a shared writable parent directory safe.
+
 If a real key was committed, assume it is compromised even after deleting the
 file from Git history. Stop using that identity and follow an incident-response
 plan appropriate to the systems that trusted it.
