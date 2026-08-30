@@ -1,9 +1,12 @@
 import base64
 import io
+import json
 import tempfile
 import unittest
 import urllib.error
+from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from cryptography.hazmat.primitives.asymmetric import ed25519
@@ -52,6 +55,8 @@ class AgentTests(unittest.TestCase):
     def test_signature_is_protocol_compatible(self):
         key = ed25519.Ed25519PrivateKey.generate()
         signature = agent.sign_message(key, "lobby", "123", "hello")
+        self.assertEqual(len(signature), 86)
+        self.assertIn(signature[-1], "AQgw")
         padded = signature + "=" * (-len(signature) % 4)
         key.public_key().verify(base64.urlsafe_b64decode(padded), b"lobby|123|hello")
 
@@ -178,6 +183,92 @@ class AgentTests(unittest.TestCase):
         excerpt = agent.safe_error_excerpt("x" * (agent.MAX_ERROR_CHARS + 20))
         self.assertEqual(len(excerpt), agent.MAX_ERROR_CHARS)
         self.assertTrue(excerpt.endswith("…"))
+
+    def test_posted_record_signature_is_reverified(self):
+        key = ed25519.Ed25519PrivateKey.generate()
+        did = agent.did_from_public_key(key.public_key())
+        signature = agent.sign_message(key, "lobby", "123", "verified text")
+        payload = {
+            "posted": {
+                "seq": 9,
+                "ts": "2026-08-30T00:00:00Z",
+                "from": did,
+                "text": "verified text",
+                "nonce": 123,
+                "sig": signature,
+            }
+        }
+        record, reverified = agent.verify_posted_record(
+            key.public_key(), "lobby", did, "123", "verified text", signature, payload
+        )
+        self.assertEqual(record["seq"], 9)
+        self.assertTrue(reverified)
+        payload["posted"]["text"] = "changed text"
+        with self.assertRaisesRegex(ValueError, "text does not match"):
+            agent.verify_posted_record(
+                key.public_key(), "lobby", did, "123", "verified text", signature, payload
+            )
+        payload["posted"]["text"] = "verified text"
+        payload["posted"]["sig"] = signature[:-1] + "!"
+        with self.assertRaisesRegex(ValueError, "canonical base64url"):
+            agent.verify_posted_record(
+                key.public_key(), "lobby", did, "123", "verified text",
+                payload["posted"]["sig"], payload
+            )
+
+    def test_missing_stored_signature_means_not_reverifiable(self):
+        key = ed25519.Ed25519PrivateKey.generate()
+        did = agent.did_from_public_key(key.public_key())
+        signature = agent.sign_message(key, "lobby", "123", "legacy record")
+        payload = {
+            "posted": {
+                "seq": 8,
+                "ts": "2026-08-29T00:00:00Z",
+                "from": did,
+                "text": "legacy record",
+                "nonce": 123,
+            }
+        }
+        _, reverified = agent.verify_posted_record(
+            key.public_key(), "lobby", did, "123", "legacy record", signature, payload
+        )
+        self.assertFalse(reverified)
+
+    def test_send_logs_only_the_verified_posted_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "identity.json"
+            key, did = agent.generate_identity(path)
+            nonce = "123"
+            text = "one useful contribution"
+            signature = agent.sign_message(key, "lobby", nonce, text)
+            payload = {
+                "posted": {
+                    "seq": 11,
+                    "ts": "2026-08-30T00:00:00Z",
+                    "from": did,
+                    "text": text,
+                    "nonce": int(nonce),
+                    "sig": signature,
+                },
+                "messages": [{"text": "UNTRUSTED ROOM CONTENT"}],
+            }
+            args = SimpleNamespace(
+                key_file=path,
+                room="lobby",
+                message=text,
+                base_url=agent.DEFAULT_BASE_URL,
+                timeout=15,
+                commit=True,
+                show_url=False,
+            )
+            output = io.StringIO()
+            with mock.patch("agent.next_nonce", return_value=nonce), mock.patch(
+                "agent.request_text", return_value=(200, json.dumps(payload))
+            ) as request, redirect_stdout(output):
+                agent.command_send(args)
+            self.assertTrue(request.call_args.args[0].endswith("?format=json"))
+            self.assertIn("Stored signature: verified locally", output.getvalue())
+            self.assertNotIn("UNTRUSTED ROOM CONTENT", output.getvalue())
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ Network writes are never performed implicitly. Use --commit on publish/send.
 
 import argparse
 import base64
+import binascii
 import errno
 import hashlib
 import json
@@ -218,6 +219,43 @@ def sign_message(private_key, room, nonce, text):
     return base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
 
 
+def verify_posted_record(public_key, room, did, nonce, text, signature, payload):
+    if not isinstance(payload, dict) or not isinstance(payload.get("posted"), dict):
+        raise ValueError("server JSON response is missing the posted record")
+    record = payload["posted"]
+    if record.get("from") != did:
+        raise ValueError("posted record DID does not match the signing identity")
+    stored_nonce = record.get("nonce")
+    if isinstance(stored_nonce, bool) or str(stored_nonce) != nonce:
+        raise ValueError("posted record nonce does not match the signed nonce")
+    if record.get("text") != text:
+        raise ValueError("posted record text does not match the signed text")
+    if isinstance(record.get("seq"), bool) or not isinstance(record.get("seq"), int):
+        raise ValueError("posted record sequence must be an integer")
+    if record["seq"] < 1 or not isinstance(record.get("ts"), str) or not record["ts"]:
+        raise ValueError("posted record is missing a valid sequence or timestamp")
+    stored_signature = record.get("sig")
+    if stored_signature is None:
+        return record, False
+    if stored_signature != signature:
+        raise ValueError("posted record signature does not match the submitted signature")
+    try:
+        raw_signature = base64.b64decode(
+            stored_signature + "==", altchars=b"-_", validate=True
+        )
+    except (ValueError, binascii.Error) as error:
+        raise ValueError("posted record signature is not canonical base64url") from error
+    canonical = base64.urlsafe_b64encode(raw_signature).decode("ascii").rstrip("=")
+    if len(raw_signature) != 64 or canonical != stored_signature:
+        raise ValueError("posted record signature is not canonical base64url")
+    signed = "{}|{}|{}".format(room, nonce, text).encode("utf-8")
+    try:
+        public_key.verify(raw_signature, signed)
+    except InvalidSignature as error:
+        raise ValueError("posted record signature does not verify") from error
+    return record, True
+
+
 def build_signed_message_url(base_url, did, room, nonce, text, signature):
     room = validate_room(room)
     nonce = validate_nonce(nonce)
@@ -311,9 +349,17 @@ def command_send(args):
         if args.show_url:
             print("One-time signed URL: {}".format(url))
         return
-    status, body = request_text(url, args.timeout)
+    status, body = request_text(url + "?format=json", args.timeout)
+    record, reverified = verify_posted_record(
+        private_key.public_key(), room, did, nonce, text, signature, json.loads(body)
+    )
     print("Signed message broadcast (HTTP {})".format(status))
-    print(body.strip())
+    print("Stored sequence: {}".format(record["seq"]))
+    print("Stored timestamp: {}".format(record["ts"]))
+    if reverified:
+        print("Stored signature: verified locally")
+    else:
+        print("Stored signature: unavailable on this server version")
     print("View: {}/humans#r/{}".format(validate_base_url(args.base_url), room))
 
 
