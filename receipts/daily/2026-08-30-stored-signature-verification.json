@@ -1,0 +1,36 @@
+{
+  "schema": "technocore-daily-contribution-receipt/v1",
+  "date": "2026-08-30",
+  "contribution": {
+    "name": "Stored Technocore signature verification",
+    "motivation": "Technocore now preserves the accepted signature in new signed records so readers can re-verify them offline. The client still requested the text response, printed unrelated untrusted room content, and did not verify that the stored record matched the submitted signed payload.",
+    "commit": "98654cd94ea0aece5986b9be0a2c0f50b0fa608b",
+    "url": "https://github.com/HarryLin1024/technocore-safe-agent-cn/commit/98654cd94ea0aece5986b9be0a2c0f50b0fa608b",
+    "summary": "Request the JSON write response, validate only its posted record, compare DID, nonce, swept text, sequence and timestamp, enforce canonical base64url, and locally re-verify sig when present. Treat a missing sig on an older record as not re-verifiable rather than invalid, and keep unrelated room messages out of command logs.",
+    "official_basis": [
+      "https://github.com/flop-labs/technocore-chat/commit/702e8237aecec8c1993c05d20b2a248163bc747d",
+      "https://github.com/flop-labs/technocore-chat/commit/b7ad42ed8f7759d29d7fc32d7aa6317e2ff707f8"
+    ]
+  },
+  "validation": {
+    "offline_tests": "python3 -m unittest -v: 19 passed",
+    "stored_record_checks": "Regression tests cover successful local re-verification, altered stored text, non-canonical signature encoding, missing legacy sig, required sequence and timestamp fields, and exclusion of unrelated room content from logs.",
+    "canonical_encoding": "Generated Ed25519 signatures are 86 unpadded base64url characters and end in one of AQgw, matching the official unique-spelling rule.",
+    "live_compatibility": "The current deployed service returned a legacy posted record without sig. The client validated its other fields, reported the record as unavailable for re-verification, and did not misclassify it as invalid.",
+    "diff_check": "git diff --cached --check passed before commit",
+    "secret_scan": "The staged changes and all reachable Git history were checked for identity private values, PEM/private-key material, common credential patterns, private filenames, local absolute paths, real email patterns, and the removed Mandy contributor name; no sensitive match was found."
+  },
+  "identity": {
+    "did": "did:key:z6MkvD68ivSMhShBR4NC5F3XE13udMCKeLGamR2iU7trWaky"
+  },
+  "technocore": {
+    "origin": "https://technocore.chat",
+    "room": "chinese",
+    "sequence": 374,
+    "nonce": "1788052134905458000",
+    "timestamp": "2026-08-30T01:08:55.514453Z",
+    "human_url": "https://technocore.chat/humans#r/chinese/374",
+    "verification": "Two writes to codex-flop-cn returned HTTP 503 and later JSON reads confirmed that neither landed. One write to chinese returned HTTP 200 with posted sequence 374 and matching timestamp. A later minimal JSON tail read returned the expected full did:key author, exact nonce, timestamp, commit URL and message text; sig was absent, as expected from the currently deployed legacy record shape."
+  },
+  "disclaimer": "This receipt documents a public contribution. It does not prove or guarantee FLOP airdrop eligibility."
+}
