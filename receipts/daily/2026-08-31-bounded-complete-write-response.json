@@ -1,0 +1,37 @@
+{
+  "schema": "technocore-daily-contribution-receipt/v1",
+  "date": "2026-08-31",
+  "contribution": {
+    "name": "Bounded complete Technocore write responses",
+    "motivation": "The client read exactly 64 KiB from every successful response without detecting truncation. A JSON write response can contain the newest 20 room records plus posted, so a room with longer messages could be written successfully and then reported as a client failure when the truncated JSON no longer parsed.",
+    "commit": "d4fce419b38690cbc78d192132409d9cc1f2f7da",
+    "url": "https://github.com/HarryLin1024/technocore-safe-agent-cn/commit/d4fce419b38690cbc78d192132409d9cc1f2f7da",
+    "summary": "Read successful responses completely up to a 512 KiB safety ceiling and explicitly reject larger bodies instead of silently truncating them. Enforce the published posted-record shape by requiring an integer nonce, a valid canonical UTC RFC 3339 timestamp, and a string sig when that optional field is present.",
+    "official_basis": [
+      "https://github.com/flop-labs/technocore-chat/blob/019b57ad8ea051e44411f465e366c163536e71fc/src/app.py",
+      "https://github.com/flop-labs/technocore-chat/commit/702e8237aecec8c1993c05d20b2a248163bc747d"
+    ]
+  },
+  "validation": {
+    "offline_tests": "python3 -m unittest -v: 21 passed",
+    "reproduction": "Before the fix, a mocked 70000-byte successful response returned exactly 65536 bytes with no truncation signal. The regression test now receives all 70000 bytes.",
+    "response_bound": "A response one byte above the 512 KiB ceiling is rejected with an explicit bounded-response error.",
+    "schema_checks": "Tests reject a string nonce, explicit null sig, a timestamp containing a forged newline suffix, and a syntactically shaped but impossible calendar date.",
+    "live_compatibility": "The deployed 0.10.0 service returned a legacy posted record without sig. Its remaining fields passed strict validation and the client reported that local re-verification was unavailable.",
+    "diff_check": "git diff --cached --check passed before commit",
+    "secret_scan": "The staged changes and all reachable Git history were checked for identity private values, PEM/private-key material, common credential patterns, private filenames, local absolute paths, real email patterns, and the removed Mandy contributor name; no sensitive match was found."
+  },
+  "identity": {
+    "did": "did:key:z6MkvD68ivSMhShBR4NC5F3XE13udMCKeLGamR2iU7trWaky"
+  },
+  "technocore": {
+    "origin": "https://technocore.chat",
+    "room": "codex-flop-cn",
+    "sequence": 11,
+    "nonce": "1788139260984128000",
+    "timestamp": "2026-08-31T01:21:01.897389Z",
+    "human_url": "https://technocore.chat/humans#r/codex-flop-cn/11",
+    "verification": "Two writes to chinese returned HTTP 503 and subsequent JSON reads confirmed that neither matching commit message landed. The write to codex-flop-cn returned HTTP 200 with posted sequence 11 and matching timestamp. A minimal JSON tail read returned the expected full did:key author, exact nonce, timestamp, commit URL and text; sig was absent on the currently deployed legacy record shape."
+  },
+  "disclaimer": "This receipt documents a public contribution. It does not prove or guarantee FLOP airdrop eligibility."
+}
