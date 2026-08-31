@@ -7,6 +7,7 @@ Network writes are never performed implicitly. Use --commit on publish/send.
 import argparse
 import base64
 import binascii
+import datetime
 import errno
 import hashlib
 import json
@@ -32,6 +33,12 @@ B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 INVISIBLE_CATEGORIES = frozenset(("Cc", "Cf", "Cs", "Co", "Zl", "Zp"))
 MAX_MESSAGE_CHARS = 4096
 MAX_ERROR_CHARS = 500
+MAX_SUCCESS_RESPONSE_BYTES = 512 * 1024
+MAX_ERROR_RESPONSE_BYTES = 64 * 1024
+TIMESTAMP_RE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{1,6})?Z"
+)
 SIGNED_URL_RE = re.compile(
     r"(?:https?://[^\s]+)?/(?:r/[^/\s]+/say-signed|"
     r"kv/[^/\s]+/[^/\s]+/set-signed)/\S+"
@@ -226,17 +233,26 @@ def verify_posted_record(public_key, room, did, nonce, text, signature, payload)
     if record.get("from") != did:
         raise ValueError("posted record DID does not match the signing identity")
     stored_nonce = record.get("nonce")
-    if isinstance(stored_nonce, bool) or str(stored_nonce) != nonce:
+    if type(stored_nonce) is not int or stored_nonce != int(nonce):
         raise ValueError("posted record nonce does not match the signed nonce")
     if record.get("text") != text:
         raise ValueError("posted record text does not match the signed text")
     if isinstance(record.get("seq"), bool) or not isinstance(record.get("seq"), int):
         raise ValueError("posted record sequence must be an integer")
-    if record["seq"] < 1 or not isinstance(record.get("ts"), str) or not record["ts"]:
+    timestamp = record.get("ts")
+    if record["seq"] < 1 or not isinstance(timestamp, str):
         raise ValueError("posted record is missing a valid sequence or timestamp")
-    stored_signature = record.get("sig")
-    if stored_signature is None:
+    if not TIMESTAMP_RE.fullmatch(timestamp):
+        raise ValueError("posted record timestamp is not canonical UTC RFC 3339")
+    try:
+        datetime.datetime.fromisoformat(timestamp[:-1] + "+00:00")
+    except ValueError as error:
+        raise ValueError("posted record timestamp is not canonical UTC RFC 3339") from error
+    if "sig" not in record:
         return record, False
+    stored_signature = record["sig"]
+    if not isinstance(stored_signature, str):
+        raise ValueError("posted record signature must be a string when present")
     if stored_signature != signature:
         raise ValueError("posted record signature does not match the submitted signature")
     try:
@@ -296,9 +312,12 @@ def request_text(url, timeout=15):
     )
     try:
         with opener.open(request, timeout=timeout) as response:
-            return response.status, response.read(65536).decode("utf-8", errors="replace")
+            raw = response.read(MAX_SUCCESS_RESPONSE_BYTES + 1)
+            if len(raw) > MAX_SUCCESS_RESPONSE_BYTES:
+                raise ValueError("server response exceeds the 512 KiB safety limit")
+            return response.status, raw.decode("utf-8", errors="replace")
     except urllib.error.HTTPError as error:
-        body = error.read(65536).decode("utf-8", errors="replace")
+        body = error.read(MAX_ERROR_RESPONSE_BYTES).decode("utf-8", errors="replace")
         raise HTTPStatusError(error.code, body) from None
 
 

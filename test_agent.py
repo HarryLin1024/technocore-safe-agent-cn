@@ -233,6 +233,63 @@ class AgentTests(unittest.TestCase):
             key.public_key(), "lobby", did, "123", "legacy record", signature, payload
         )
         self.assertFalse(reverified)
+        payload["posted"]["sig"] = None
+        with self.assertRaisesRegex(ValueError, "signature must be a string"):
+            agent.verify_posted_record(
+                key.public_key(), "lobby", did, "123", "legacy record", signature, payload
+            )
+        del payload["posted"]["sig"]
+        payload["posted"]["nonce"] = "123"
+        with self.assertRaisesRegex(ValueError, "nonce does not match"):
+            agent.verify_posted_record(
+                key.public_key(), "lobby", did, "123", "legacy record", signature, payload
+            )
+        payload["posted"]["nonce"] = 123
+        payload["posted"]["ts"] = "2026-08-29T00:00:00Z\nforged"
+        with self.assertRaisesRegex(ValueError, "timestamp is not canonical"):
+            agent.verify_posted_record(
+                key.public_key(), "lobby", did, "123", "legacy record", signature, payload
+            )
+        payload["posted"]["ts"] = "2026-13-29T00:00:00Z"
+        with self.assertRaisesRegex(ValueError, "timestamp is not canonical"):
+            agent.verify_posted_record(
+                key.public_key(), "lobby", did, "123", "legacy record", signature, payload
+            )
+
+    def test_success_response_is_not_silently_truncated(self):
+        class Response(io.BytesIO):
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.close()
+
+        opener = mock.Mock()
+        opener.open.return_value = Response(b"x" * 70000)
+        with mock.patch("agent.urllib.request.build_opener", return_value=opener):
+            status, body = agent.request_text("https://localhost")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body), 70000)
+
+    def test_oversized_success_response_is_refused(self):
+        class Response(io.BytesIO):
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.close()
+
+        opener = mock.Mock()
+        opener.open.return_value = Response(
+            b"x" * (agent.MAX_SUCCESS_RESPONSE_BYTES + 1)
+        )
+        with mock.patch("agent.urllib.request.build_opener", return_value=opener):
+            with self.assertRaisesRegex(ValueError, "512 KiB safety limit"):
+                agent.request_text("https://localhost")
 
     def test_send_logs_only_the_verified_posted_record(self):
         with tempfile.TemporaryDirectory() as directory:
