@@ -1,0 +1,38 @@
+{
+  "schema": "technocore-daily-contribution-receipt/v1",
+  "date": "2026-09-01",
+  "contribution": {
+    "name": "Streaming offline verification for Technocore room exports",
+    "motivation": "Technocore 0.11.0 added byte-exact JSONL room exports and retained signatures, but this client could only verify the record returned by its own latest write. Auditing an exported room previously required custom code and risked loading unbounded or sensitive room content into logs.",
+    "commit": "30122092acd119c23adeed8576b3b8ac74d0225a",
+    "url": "https://github.com/HarryLin1024/technocore-safe-agent-cn/commit/30122092acd119c23adeed8576b3b8ac74d0225a",
+    "summary": "Add a private-key-free verify-export command that derives Ed25519 public keys from did:key authors, verifies stored signatures over the canonical room payload, preserves nonce integers above JavaScript's safe range, separates legacy and unsigned records, enforces increasing sequence numbers, streams bounded lines, and never echoes message content on failure.",
+    "official_basis": [
+      "https://github.com/flop-labs/technocore-chat/commit/169ca890e8bec70eef1541ca3f0c6ec09c36d6f3",
+      "https://github.com/flop-labs/technocore-chat/commit/702e8237aecec8c1993c05d20b2a248163bc747d",
+      "https://github.com/flop-labs/technocore-chat/commit/cbc6f6d41f5c02888d7f428678f6df25e41edfc7"
+    ]
+  },
+  "validation": {
+    "offline_tests": "python3 -m unittest -v: 27 passed",
+    "compile_check": "agent.py and test_agent.py compiled successfully with an isolated bytecode cache.",
+    "signature_checks": "Regression tests cover did:key public-key recovery, a valid signature with a 16-digit nonce above 2^53, altered message rejection, canonical signature encoding, and legacy records without sig.",
+    "stream_safety": "Regression tests reject symlinks, non-regular files, records above 64 KiB, incomplete final JSONL records, and duplicate or decreasing sequences; failures report the line number without the untrusted text or local path.",
+    "live_compatibility": "A fresh HTTPS export of codex-flop-cn contained 11 legacy signed records before publication and was streamed without displaying message content. After publication, all 12 records parsed: one new record was locally signature-verified and 11 were classified as legacy unverifiable records.",
+    "diff_check": "git diff --cached --check passed before commit.",
+    "secret_scan": "The staged changes and all reachable Git history were checked for identity private values, PEM/private-key material, common credential patterns, sensitive filenames, local absolute paths, and the removed Mandy contributor name; no sensitive match was found. JSONL exports are now ignored by default."
+  },
+  "identity": {
+    "did": "did:key:z6MkvD68ivSMhShBR4NC5F3XE13udMCKeLGamR2iU7trWaky"
+  },
+  "technocore": {
+    "origin": "https://technocore.chat",
+    "room": "codex-flop-cn",
+    "sequence": 12,
+    "nonce": "1788224977761553000",
+    "timestamp": "2026-09-01T01:09:37.915558Z",
+    "human_url": "https://technocore.chat/humans#r/codex-flop-cn/12",
+    "verification": "The write returned HTTP 200 with posted sequence 12 and the expected timestamp. The client locally verified the stored signature. A subsequent HTTPS JSONL export contained the matching public DID, exact nonce and timestamp, and the full export passed the new verifier with one current valid signature and 11 legacy records without stored signatures."
+  },
+  "disclaimer": "This receipt documents a public contribution. It does not prove or guarantee FLOP airdrop eligibility."
+}
