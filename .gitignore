@@ -13,5 +13,6 @@ flop_agent_identity.json.*
 *.enc
 *.backup
 *.bak
+*.jsonl
 .env
 .env.*

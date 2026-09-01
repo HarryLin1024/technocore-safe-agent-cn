@@ -18,6 +18,15 @@ class AgentTests(unittest.TestCase):
     def test_base58_known_values(self):
         self.assertEqual(agent.b58encode(b"\x00"), "1")
         self.assertEqual(agent.b58encode(b"\x00\x00\x01"), "112")
+        self.assertEqual(agent.b58decode("1"), b"\x00")
+        self.assertEqual(agent.b58decode("112"), b"\x00\x00\x01")
+
+    def test_did_public_key_round_trip(self):
+        key = ed25519.Ed25519PrivateKey.generate()
+        did = agent.did_from_public_key(key.public_key())
+        message = b"offline export verification"
+        signature = key.sign(message)
+        agent.public_key_from_did(did).verify(signature, message)
 
     def test_identity_round_trip_and_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -326,6 +335,105 @@ class AgentTests(unittest.TestCase):
             self.assertTrue(request.call_args.args[0].endswith("?format=json"))
             self.assertIn("Stored signature: verified locally", output.getvalue())
             self.assertNotIn("UNTRUSTED ROOM CONTENT", output.getvalue())
+
+    def test_export_verifier_counts_record_classes(self):
+        key = ed25519.Ed25519PrivateKey.generate()
+        did = agent.did_from_public_key(key.public_key())
+        signature = agent.sign_message(key, "lobby", "9007199254740993", "current")
+        records = [
+            {
+                "seq": 1,
+                "ts": "2026-09-01T00:00:00Z",
+                "from": "human",
+                "text": "unsigned",
+            },
+            {
+                "seq": 2,
+                "ts": "2026-09-01T00:00:01Z",
+                "from": did,
+                "text": "legacy",
+                "nonce": 9007199254740992,
+            },
+            {
+                "seq": 3,
+                "ts": "2026-09-01T00:00:02.123456Z",
+                "from": did,
+                "text": "current",
+                "nonce": 9007199254740993,
+                "sig": signature,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "room.jsonl"
+            with path.open("wb") as handle:
+                for record in records:
+                    handle.write(json.dumps(record).encode("utf-8") + b"\n")
+            self.assertEqual(
+                agent.verify_export_file(path, "lobby"),
+                {
+                    "records": 3,
+                    "verified": 1,
+                    "legacy_unverifiable": 1,
+                    "unsigned": 1,
+                },
+            )
+
+    def test_export_verifier_rejects_tampering_without_echoing_content(self):
+        key = ed25519.Ed25519PrivateKey.generate()
+        did = agent.did_from_public_key(key.public_key())
+        signature = agent.sign_message(key, "lobby", "123", "original")
+        marker = "UNTRUSTED_PRIVATE_ROOM_TEXT"
+        record = {
+            "seq": 1,
+            "ts": "2026-09-01T00:00:00Z",
+            "from": did,
+            "text": marker,
+            "nonce": 123,
+            "sig": signature,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "room.jsonl"
+            path.write_bytes(json.dumps(record).encode("utf-8") + b"\n")
+            with self.assertRaisesRegex(ValueError, "export line 1") as caught:
+                agent.verify_export_file(path, "lobby")
+            self.assertIn("signature does not verify", str(caught.exception))
+            self.assertNotIn(marker, str(caught.exception))
+            self.assertNotIn(str(path), str(caught.exception))
+
+    def test_export_verifier_bounds_lines_and_rejects_incomplete_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            oversized = root / "oversized.jsonl"
+            oversized.write_bytes(b"x" * (agent.MAX_EXPORT_LINE_BYTES + 1))
+            with self.assertRaisesRegex(ValueError, "64 KiB safety limit"):
+                agent.verify_export_file(oversized, "lobby")
+            incomplete = root / "incomplete.jsonl"
+            incomplete.write_bytes(b"{}")
+            with self.assertRaisesRegex(ValueError, "incomplete JSONL record"):
+                agent.verify_export_file(incomplete, "lobby")
+
+    def test_export_verifier_rejects_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "room.jsonl"
+            target.write_bytes(b"")
+            alias = root / "room-link.jsonl"
+            alias.symlink_to(target)
+            with self.assertRaisesRegex(ValueError, "regular, non-symlink"):
+                agent.verify_export_file(alias, "lobby")
+
+    def test_export_verifier_rejects_reordered_records(self):
+        records = [
+            {"seq": 2, "ts": "2026-09-01T00:00:01Z", "from": "human", "text": "a"},
+            {"seq": 1, "ts": "2026-09-01T00:00:00Z", "from": "human", "text": "b"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "room.jsonl"
+            path.write_bytes(
+                b"".join(json.dumps(record).encode("utf-8") + b"\n" for record in records)
+            )
+            with self.assertRaisesRegex(ValueError, "strictly increasing"):
+                agent.verify_export_file(path, "lobby")
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ MAX_MESSAGE_CHARS = 4096
 MAX_ERROR_CHARS = 500
 MAX_SUCCESS_RESPONSE_BYTES = 512 * 1024
 MAX_ERROR_RESPONSE_BYTES = 64 * 1024
+MAX_EXPORT_LINE_BYTES = 64 * 1024
 TIMESTAMP_RE = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
     r"(?:\.[0-9]{1,6})?Z"
@@ -66,12 +67,39 @@ def b58encode(value):
     return "1" * zeros + "".join(reversed(encoded))
 
 
+def b58decode(value):
+    number = 0
+    for character in value:
+        try:
+            digit = B58.index(character)
+        except ValueError as error:
+            raise ValueError("invalid base58btc character") from error
+        number = number * 58 + digit
+    decoded = (
+        number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
+    )
+    zeros = len(value) - len(value.lstrip("1"))
+    return b"\x00" * zeros + decoded
+
+
 def did_from_public_key(public_key):
     raw_public = public_key.public_bytes(
         serialization.Encoding.Raw,
         serialization.PublicFormat.Raw,
     )
     return "did:key:z" + b58encode(b"\xed\x01" + raw_public)
+
+
+def public_key_from_did(did):
+    if not isinstance(did, str) or not did.startswith("did:key:z6Mk"):
+        raise ValueError("record author is not an Ed25519 did:key")
+    multibase = did[len("did:key:") :]
+    if len(multibase) != 48:
+        raise ValueError("record author has an invalid did:key length")
+    decoded = b58decode(multibase[1:])
+    if len(decoded) != 34 or not decoded.startswith(b"\xed\x01"):
+        raise ValueError("record author is not an Ed25519 did:key")
+    return ed25519.Ed25519PublicKey.from_public_bytes(decoded[2:])
 
 
 def generate_identity(key_file):
@@ -226,6 +254,33 @@ def sign_message(private_key, room, nonce, text):
     return base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
 
 
+def validate_record_timestamp(timestamp):
+    if not isinstance(timestamp, str) or not TIMESTAMP_RE.fullmatch(timestamp):
+        raise ValueError("record timestamp is not canonical UTC RFC 3339")
+    try:
+        datetime.datetime.fromisoformat(timestamp[:-1] + "+00:00")
+    except ValueError as error:
+        raise ValueError("record timestamp is not canonical UTC RFC 3339") from error
+    return timestamp
+
+
+def verify_record_signature(public_key, room, nonce, text, signature):
+    if not isinstance(signature, str):
+        raise ValueError("record signature must be a string when present")
+    try:
+        raw_signature = base64.b64decode(signature + "==", altchars=b"-_", validate=True)
+    except (ValueError, binascii.Error) as error:
+        raise ValueError("record signature is not canonical base64url") from error
+    canonical = base64.urlsafe_b64encode(raw_signature).decode("ascii").rstrip("=")
+    if len(raw_signature) != 64 or canonical != signature:
+        raise ValueError("record signature is not canonical base64url")
+    signed = "{}|{}|{}".format(room, nonce, text).encode("utf-8")
+    try:
+        public_key.verify(raw_signature, signed)
+    except InvalidSignature as error:
+        raise ValueError("record signature does not verify") from error
+
+
 def verify_posted_record(public_key, room, did, nonce, text, signature, payload):
     if not isinstance(payload, dict) or not isinstance(payload.get("posted"), dict):
         raise ValueError("server JSON response is missing the posted record")
@@ -240,12 +295,10 @@ def verify_posted_record(public_key, room, did, nonce, text, signature, payload)
     if isinstance(record.get("seq"), bool) or not isinstance(record.get("seq"), int):
         raise ValueError("posted record sequence must be an integer")
     timestamp = record.get("ts")
-    if record["seq"] < 1 or not isinstance(timestamp, str):
+    if record["seq"] < 1:
         raise ValueError("posted record is missing a valid sequence or timestamp")
-    if not TIMESTAMP_RE.fullmatch(timestamp):
-        raise ValueError("posted record timestamp is not canonical UTC RFC 3339")
     try:
-        datetime.datetime.fromisoformat(timestamp[:-1] + "+00:00")
+        validate_record_timestamp(timestamp)
     except ValueError as error:
         raise ValueError("posted record timestamp is not canonical UTC RFC 3339") from error
     if "sig" not in record:
@@ -256,20 +309,104 @@ def verify_posted_record(public_key, room, did, nonce, text, signature, payload)
     if stored_signature != signature:
         raise ValueError("posted record signature does not match the submitted signature")
     try:
-        raw_signature = base64.b64decode(
-            stored_signature + "==", altchars=b"-_", validate=True
-        )
-    except (ValueError, binascii.Error) as error:
-        raise ValueError("posted record signature is not canonical base64url") from error
-    canonical = base64.urlsafe_b64encode(raw_signature).decode("ascii").rstrip("=")
-    if len(raw_signature) != 64 or canonical != stored_signature:
-        raise ValueError("posted record signature is not canonical base64url")
-    signed = "{}|{}|{}".format(room, nonce, text).encode("utf-8")
-    try:
-        public_key.verify(raw_signature, signed)
-    except InvalidSignature as error:
-        raise ValueError("posted record signature does not verify") from error
+        verify_record_signature(public_key, room, nonce, text, stored_signature)
+    except ValueError as error:
+        raise ValueError("posted " + str(error)) from error
     return record, True
+
+
+def verify_export_record(room, record):
+    room = validate_room(room)
+    if not isinstance(record, dict):
+        raise ValueError("export record must be a JSON object")
+    sequence = record.get("seq")
+    if type(sequence) is not int or sequence < 1:
+        raise ValueError("export record sequence must be a positive integer")
+    validate_record_timestamp(record.get("ts"))
+    author = record.get("from")
+    if not isinstance(author, str):
+        raise ValueError("export record author must be a string")
+    text = record.get("text")
+    if not isinstance(text, str) or validate_message(text) != text:
+        raise ValueError("export record text is not protocol-canonical")
+    if not author.startswith("did:key:"):
+        if "nonce" in record or "sig" in record:
+            raise ValueError("unsigned export record contains signed fields")
+        return "unsigned"
+    nonce = record.get("nonce")
+    if type(nonce) is not int:
+        raise ValueError("signed export record nonce must be an integer")
+    nonce = validate_nonce(nonce)
+    public_key = public_key_from_did(author)
+    if "sig" not in record:
+        return "legacy_unverifiable"
+    verify_record_signature(public_key, room, nonce, text, record["sig"])
+    return "verified"
+
+
+def verify_export_file(export_file, room):
+    room = validate_room(room)
+    export_file = Path(export_file)
+    initial = export_file.lstat()
+    if not stat.S_ISREG(initial.st_mode):
+        raise ValueError("export file must be a regular, non-symlink file")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = None
+    counts = {
+        "records": 0,
+        "verified": 0,
+        "legacy_unverifiable": 0,
+        "unsigned": 0,
+    }
+    previous_sequence = None
+    try:
+        try:
+            descriptor = os.open(str(export_file), flags)
+        except OSError as error:
+            if error.errno == errno.ELOOP:
+                raise ValueError(
+                    "export file must be a regular, non-symlink file"
+                ) from None
+            raise
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or (
+            initial.st_dev, initial.st_ino
+        ) != (opened.st_dev, opened.st_ino):
+            raise ValueError("export file changed while it was being opened")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            line_number = 0
+            while True:
+                raw_line = handle.readline(MAX_EXPORT_LINE_BYTES + 1)
+                if not raw_line:
+                    break
+                line_number += 1
+                try:
+                    if len(raw_line) > MAX_EXPORT_LINE_BYTES:
+                        raise ValueError("export record exceeds the 64 KiB safety limit")
+                    if not raw_line.endswith(b"\n"):
+                        raise ValueError("export ends with an incomplete JSONL record")
+                    record = json.loads(raw_line.decode("utf-8"))
+                    category = verify_export_record(room, record)
+                    if previous_sequence is not None and record["seq"] <= previous_sequence:
+                        raise ValueError(
+                            "export record sequences are not strictly increasing"
+                        )
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    raise ValueError(
+                        "export line {}: record is not valid UTF-8 JSON".format(line_number)
+                    ) from None
+                except ValueError as error:
+                    raise ValueError(
+                        "export line {}: {}".format(line_number, error)
+                    ) from None
+                counts["records"] += 1
+                counts[category] += 1
+                previous_sequence = record["seq"]
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    return counts
 
 
 def build_signed_message_url(base_url, did, room, nonce, text, signature):
@@ -382,6 +519,17 @@ def command_send(args):
     print("View: {}/humans#r/{}".format(validate_base_url(args.base_url), room))
 
 
+def command_verify_export(args):
+    room = validate_room(args.room)
+    counts = verify_export_file(args.export_file, room)
+    print("Export verified")
+    print("Room: {}".format(room))
+    print("Records: {}".format(counts["records"]))
+    print("Signed and verified: {}".format(counts["verified"]))
+    print("Legacy signed, no stored signature: {}".format(counts["legacy_unverifiable"]))
+    print("Unsigned: {}".format(counts["unsigned"]))
+
+
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--key-file", type=Path, default=DEFAULT_KEY_FILE)
@@ -405,6 +553,12 @@ def parser():
         "--show-url", action="store_true", help="print the one-time signed URL in dry-run"
     )
     send_parser.set_defaults(func=command_send)
+    verify_parser = commands.add_parser(
+        "verify-export", help="offline-verify a room JSONL export"
+    )
+    verify_parser.add_argument("--room", required=True)
+    verify_parser.add_argument("export_file", type=Path)
+    verify_parser.set_defaults(func=command_verify_export)
     return result
 
 
