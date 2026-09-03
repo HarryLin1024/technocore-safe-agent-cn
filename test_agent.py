@@ -435,6 +435,28 @@ class AgentTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "strictly increasing"):
                 agent.verify_export_file(path, "lobby")
 
+    def test_export_verifier_rejects_duplicate_json_keys(self):
+        ambiguous = (
+            b'{"seq":1,"ts":"2026-09-03T00:00:00Z","from":"human",'
+            b'"text":"first","text":"second"}\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ambiguous.jsonl"
+            path.write_bytes(ambiguous)
+            with self.assertRaisesRegex(ValueError, "duplicate JSON object key"):
+                agent.verify_export_file(path, "lobby")
+
+    def test_export_verifier_rejects_non_standard_json_numbers(self):
+        non_standard = (
+            b'{"seq":1,"ts":"2026-09-03T00:00:00Z","from":"human",'
+            b'"text":"hello","extension":NaN}\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "non-standard.jsonl"
+            path.write_bytes(non_standard)
+            with self.assertRaisesRegex(ValueError, "non-standard JSON number"):
+                agent.verify_export_file(path, "lobby")
+
 
 if __name__ == "__main__":
     unittest.main()

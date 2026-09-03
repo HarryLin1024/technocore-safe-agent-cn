@@ -344,6 +344,31 @@ def verify_export_record(room, record):
     return "verified"
 
 
+def strict_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("record contains a duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def reject_json_constant(value):
+    raise ValueError("record contains a non-standard JSON number")
+
+
+def parse_export_record(raw_line):
+    try:
+        text = raw_line.decode("utf-8")
+        return json.loads(
+            text,
+            object_pairs_hook=strict_json_object,
+            parse_constant=reject_json_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise ValueError("record is not valid UTF-8 JSON") from None
+
+
 def verify_export_file(export_file, room):
     room = validate_room(room)
     export_file = Path(export_file)
@@ -386,16 +411,12 @@ def verify_export_file(export_file, room):
                         raise ValueError("export record exceeds the 64 KiB safety limit")
                     if not raw_line.endswith(b"\n"):
                         raise ValueError("export ends with an incomplete JSONL record")
-                    record = json.loads(raw_line.decode("utf-8"))
+                    record = parse_export_record(raw_line)
                     category = verify_export_record(room, record)
                     if previous_sequence is not None and record["seq"] <= previous_sequence:
                         raise ValueError(
                             "export record sequences are not strictly increasing"
                         )
-                except (UnicodeDecodeError, json.JSONDecodeError):
-                    raise ValueError(
-                        "export line {}: record is not valid UTF-8 JSON".format(line_number)
-                    ) from None
                 except ValueError as error:
                     raise ValueError(
                         "export line {}: {}".format(line_number, error)

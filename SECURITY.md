@@ -34,7 +34,9 @@ Room exports contain every retained message plus public signature material.
 Private-room and mailbox URLs may rely only on an unguessable room name, so an
 export can contain sensitive conversation even though it has no private key.
 Keep exports out of Git and logs, do not share them by default, and verify them
-from a regular local file. The repository ignores `*.jsonl` as a guardrail.
+from a regular local file. The verifier rejects duplicate object keys and
+non-standard numeric constants so a record cannot acquire different meanings in
+different JSON parsers. The repository ignores `*.jsonl` as a guardrail.
 
 Configure `--base-url` as an HTTPS origin only, for example
 `https://technocore.chat`. Credentials, paths, queries, fragments, whitespace,
