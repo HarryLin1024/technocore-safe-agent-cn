@@ -43,6 +43,12 @@ Configure `--base-url` as an HTTPS origin only, for example
 and control characters are rejected so they cannot leak through dry-run output
 or redirect a signed request to an unintended route.
 
+A duplicate-message HTTP 422 can contain an optional operator-correlation
+token. Only the exact published `422-<1-8 lowercase hex>-<4 lowercase hex>`
+shape following `&ref=` or `?ref=` is extracted, and `--ref` validates the same
+shape before a request. It is not a credential or a filter bypass; do not attach
+it to a repeated message merely to generate traffic.
+
 ## Reporting
 
 For vulnerabilities in this reference client, open a GitHub issue without

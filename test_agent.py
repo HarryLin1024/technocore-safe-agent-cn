@@ -188,6 +188,30 @@ class AgentTests(unittest.TestCase):
         self.assertNotIn("\n", str(caught.exception))
         self.assertNotIn("\u001b", str(caught.exception))
 
+    def test_http_422_preserves_a_strict_follow_up_ref_beyond_excerpt(self):
+        token = "422-6aa1bcde-09af"
+        body = "duplicate guidance " + "x" * 700 + " add &ref=" + token
+        error = agent.HTTPStatusError(422, body)
+        self.assertEqual(error.follow_up_ref, token)
+        self.assertIn("Follow-up ref: " + token, str(error))
+        self.assertLessEqual(len(error.body), agent.MAX_ERROR_CHARS)
+        self.assertIsNone(
+            agent.HTTPStatusError(422, "add &ref=422-not-hex-zzzz").follow_up_ref
+        )
+        self.assertIsNone(
+            agent.HTTPStatusError(422, "add &ref=" + token + "suffix").follow_up_ref
+        )
+        self.assertIsNone(agent.HTTPStatusError(429, "add &ref=" + token).follow_up_ref)
+
+    def test_follow_up_ref_requires_the_official_shape(self):
+        self.assertEqual(
+            agent.validate_follow_up_ref("422-6aa1bcde-09af"),
+            "422-6aa1bcde-09af",
+        )
+        for value in ("422-6AA1BCDE-09af", "422-123456789-09af", "x&ref=422-1-09af"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                agent.validate_follow_up_ref(value)
+
     def test_error_excerpt_is_bounded(self):
         excerpt = agent.safe_error_excerpt("x" * (agent.MAX_ERROR_CHARS + 20))
         self.assertEqual(len(excerpt), agent.MAX_ERROR_CHARS)
@@ -335,6 +359,43 @@ class AgentTests(unittest.TestCase):
             self.assertTrue(request.call_args.args[0].endswith("?format=json"))
             self.assertIn("Stored signature: verified locally", output.getvalue())
             self.assertNotIn("UNTRUSTED ROOM CONTENT", output.getvalue())
+
+    def test_send_returns_an_explicit_validated_follow_up_ref(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "identity.json"
+            key, did = agent.generate_identity(path)
+            nonce = "123"
+            text = "a specific useful answer"
+            signature = agent.sign_message(key, "lobby", nonce, text)
+            payload = {
+                "posted": {
+                    "seq": 12,
+                    "ts": "2026-09-04T00:00:00Z",
+                    "from": did,
+                    "text": text,
+                    "nonce": int(nonce),
+                    "sig": signature,
+                }
+            }
+            args = SimpleNamespace(
+                key_file=path,
+                room="lobby",
+                message=text,
+                base_url=agent.DEFAULT_BASE_URL,
+                timeout=15,
+                commit=True,
+                show_url=False,
+                ref="422-6aa1bcde-09af",
+            )
+            with mock.patch("agent.next_nonce", return_value=nonce), mock.patch(
+                "agent.request_text", return_value=(200, json.dumps(payload))
+            ) as request, redirect_stdout(io.StringIO()):
+                agent.command_send(args)
+            self.assertTrue(
+                request.call_args.args[0].endswith(
+                    "?format=json&ref=422-6aa1bcde-09af"
+                )
+            )
 
     def test_export_verifier_counts_record_classes(self):
         key = ed25519.Ed25519PrivateKey.generate()

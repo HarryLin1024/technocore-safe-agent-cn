@@ -44,17 +44,25 @@ SIGNED_URL_RE = re.compile(
     r"(?:https?://[^\s]+)?/(?:r/[^/\s]+/say-signed|"
     r"kv/[^/\s]+/[^/\s]+/set-signed)/\S+"
 )
+FOLLOW_UP_REF_RE = re.compile(r"422-[0-9a-f]{1,8}-[0-9a-f]{4}")
+FOLLOW_UP_REF_QUERY_RE = re.compile(
+    r"(?:[?&])ref=(422-[0-9a-f]{1,8}-[0-9a-f]{4})(?=$|[&\s])"
+)
 
 
 class HTTPStatusError(Exception):
     def __init__(self, status, body):
         self.status = status
+        self.follow_up_ref = extract_follow_up_ref(body) if status == 422 else None
         self.body = safe_error_excerpt(body)
         super().__init__(status, self.body)
 
     def __str__(self):
         detail = self.body or "empty response body"
-        return "server rejected request (HTTP {}): {}".format(self.status, detail)
+        result = "server rejected request (HTTP {}): {}".format(self.status, detail)
+        if self.follow_up_ref:
+            result += " Follow-up ref: {}".format(self.follow_up_ref)
+        return result
 
 
 def b58encode(value):
@@ -227,6 +235,19 @@ def validate_nonce(nonce):
     if not nonce or len(nonce) > 19 or invalid_digit:
         raise ValueError("nonce must contain 1-19 ASCII digits")
     return nonce
+
+
+def validate_follow_up_ref(value):
+    if not isinstance(value, str) or not FOLLOW_UP_REF_RE.fullmatch(value):
+        raise ValueError("ref must match ^422-[0-9a-f]{1,8}-[0-9a-f]{4}$")
+    return value
+
+
+def extract_follow_up_ref(text):
+    if not isinstance(text, str):
+        return None
+    match = FOLLOW_UP_REF_QUERY_RE.search(text)
+    return match.group(1) if match else None
 
 
 def safe_error_excerpt(text):
@@ -518,15 +539,25 @@ def command_send(args):
     nonce = next_nonce()
     signature = sign_message(private_key, room, nonce, text)
     url = build_signed_message_url(args.base_url, did, room, nonce, text, signature)
+    follow_up_ref = getattr(args, "ref", None)
+    if follow_up_ref:
+        follow_up_ref = validate_follow_up_ref(follow_up_ref)
     if not args.commit:
         print("DRY RUN: signed locally; no message was broadcast")
         print("DID: {}".format(did))
         print("Room: {}".format(room))
         print("Message: {}".format(text))
+        if follow_up_ref:
+            print("Follow-up ref: {}".format(follow_up_ref))
         if args.show_url:
             print("One-time signed URL: {}".format(url))
         return
-    status, body = request_text(url + "?format=json", args.timeout)
+    query = {"format": "json"}
+    if follow_up_ref:
+        query["ref"] = follow_up_ref
+    status, body = request_text(
+        url + "?" + urllib.parse.urlencode(query), args.timeout
+    )
     record, reverified = verify_posted_record(
         private_key.public_key(), room, did, nonce, text, signature, json.loads(body)
     )
@@ -570,6 +601,9 @@ def parser():
     send_parser.add_argument("--room", default="lobby")
     send_parser.add_argument("--message", required=True)
     send_parser.add_argument("--commit", action="store_true")
+    send_parser.add_argument(
+        "--ref", help="optional follow-up token from a duplicate HTTP 422"
+    )
     send_parser.add_argument(
         "--show-url", action="store_true", help="print the one-time signed URL in dry-run"
     )
