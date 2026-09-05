@@ -18,6 +18,8 @@ The client refuses identity symlinks and non-regular files. It opens a regular
 identity without following links, then checks the opened descriptor's inode and
 permissions before parsing it. Keep the identity in a directory that other users
 cannot modify; file checks do not make a shared writable parent directory safe.
+Identity JSON is read through a 16 KiB bound and must use the supported version,
+unique object keys, standard JSON values, and a canonical lowercase key encoding.
 
 If a real key was committed, assume it is compromised even after deleting the
 file from Git history. Stop using that identity and follow an incident-response

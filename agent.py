@@ -36,6 +36,7 @@ MAX_ERROR_CHARS = 500
 MAX_SUCCESS_RESPONSE_BYTES = 512 * 1024
 MAX_ERROR_RESPONSE_BYTES = 64 * 1024
 MAX_EXPORT_LINE_BYTES = 64 * 1024
+MAX_IDENTITY_BYTES = 16 * 1024
 TIMESTAMP_RE = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
     r"(?:\.[0-9]{1,6})?Z"
@@ -169,15 +170,28 @@ def load_identity(key_file):
                 "identity permissions are too broad ({:o}); run: chmod 600 "
                 "<identity-file>".format(mode)
             )
-        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+        with os.fdopen(descriptor, "rb") as handle:
             descriptor = None
-            payload = json.load(handle)
+            raw_payload = handle.read(MAX_IDENTITY_BYTES + 1)
     finally:
         if descriptor is not None:
             os.close(descriptor)
-    raw_private = bytes.fromhex(payload["private_key_hex"])
-    if len(raw_private) != 32:
-        raise ValueError("invalid Ed25519 private key length")
+    if len(raw_payload) > MAX_IDENTITY_BYTES:
+        raise ValueError("identity file exceeds the 16 KiB safety limit")
+    try:
+        payload = strict_json_loads(raw_payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise ValueError("identity file is not valid UTF-8 JSON") from None
+    if not isinstance(payload, dict):
+        raise ValueError("identity file must contain a JSON object")
+    if type(payload.get("version")) is not int or payload["version"] != 1:
+        raise ValueError("identity file has an unsupported version")
+    encoded_private = payload.get("private_key_hex")
+    if not isinstance(encoded_private, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", encoded_private
+    ):
+        raise ValueError("identity private key must be 64 lowercase hex digits")
+    raw_private = bytes.fromhex(encoded_private)
     private_key = ed25519.Ed25519PrivateKey.from_private_bytes(raw_private)
     derived_did = did_from_public_key(private_key.public_key())
     if payload.get("did") != derived_did:
@@ -369,23 +383,27 @@ def strict_json_object(pairs):
     result = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError("record contains a duplicate JSON object key")
+            raise ValueError("JSON contains a duplicate object key")
         result[key] = value
     return result
 
 
 def reject_json_constant(value):
-    raise ValueError("record contains a non-standard JSON number")
+    raise ValueError("JSON contains a non-standard number")
+
+
+def strict_json_loads(text):
+    return json.loads(
+        text,
+        object_pairs_hook=strict_json_object,
+        parse_constant=reject_json_constant,
+    )
 
 
 def parse_export_record(raw_line):
     try:
         text = raw_line.decode("utf-8")
-        return json.loads(
-            text,
-            object_pairs_hook=strict_json_object,
-            parse_constant=reject_json_constant,
-        )
+        return strict_json_loads(text)
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise ValueError("record is not valid UTF-8 JSON") from None
 
@@ -494,7 +512,7 @@ def request_text(url, timeout=15):
             raw = response.read(MAX_SUCCESS_RESPONSE_BYTES + 1)
             if len(raw) > MAX_SUCCESS_RESPONSE_BYTES:
                 raise ValueError("server response exceeds the 512 KiB safety limit")
-            return response.status, raw.decode("utf-8", errors="replace")
+            return response.status, raw.decode("utf-8")
     except urllib.error.HTTPError as error:
         body = error.read(MAX_ERROR_RESPONSE_BYTES).decode("utf-8", errors="replace")
         raise HTTPStatusError(error.code, body) from None
@@ -559,7 +577,8 @@ def command_send(args):
         url + "?" + urllib.parse.urlencode(query), args.timeout
     )
     record, reverified = verify_posted_record(
-        private_key.public_key(), room, did, nonce, text, signature, json.loads(body)
+        private_key.public_key(), room, did, nonce, text, signature,
+        strict_json_loads(body),
     )
     print("Signed message broadcast (HTTP {})".format(status))
     print("Stored sequence: {}".format(record["seq"]))

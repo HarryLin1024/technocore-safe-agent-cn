@@ -61,6 +61,40 @@ class AgentTests(unittest.TestCase):
             self.assertIn("chmod 600 <identity-file>", str(caught.exception))
             self.assertNotIn(str(path), str(caught.exception))
 
+    def test_identity_loader_rejects_ambiguous_or_noncanonical_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "identity.json"
+            agent.generate_identity(path)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            cases = {
+                "duplicate": (
+                    '{"version":1,"version":1,"did":%s,"private_key_hex":%s}'
+                    % (json.dumps(payload["did"]), json.dumps(payload["private_key_hex"]))
+                ),
+                "future-version": json.dumps({**payload, "version": 2}),
+                "uppercase-key": json.dumps(
+                    {
+                        **payload,
+                        "private_key_hex": "A" + payload["private_key_hex"][1:],
+                    }
+                ),
+            }
+            for label, content in cases.items():
+                with self.subTest(label=label):
+                    path.write_text(content, encoding="utf-8")
+                    path.chmod(0o600)
+                    with self.assertRaises(ValueError):
+                        agent.load_identity(path)
+
+    def test_identity_loader_bounds_the_file_before_json_parsing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "identity.json"
+            path.write_bytes(b" " * (agent.MAX_IDENTITY_BYTES + 1))
+            path.chmod(0o600)
+            with self.assertRaisesRegex(ValueError, "16 KiB safety limit") as caught:
+                agent.load_identity(path)
+            self.assertNotIn(str(path), str(caught.exception))
+
     def test_signature_is_protocol_compatible(self):
         key = ed25519.Ed25519PrivateKey.generate()
         signature = agent.sign_message(key, "lobby", "123", "hello")
@@ -324,6 +358,42 @@ class AgentTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "512 KiB safety limit"):
                 agent.request_text("https://localhost")
 
+    def test_success_response_requires_valid_utf8(self):
+        class Response(io.BytesIO):
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.close()
+
+        opener = mock.Mock()
+        opener.open.return_value = Response(b"invalid:\xff")
+        with mock.patch("agent.urllib.request.build_opener", return_value=opener):
+            with self.assertRaises(UnicodeDecodeError):
+                agent.request_text("https://localhost")
+
+    def test_send_rejects_ambiguous_success_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "identity.json"
+            agent.generate_identity(path)
+            args = SimpleNamespace(
+                key_file=path,
+                room="lobby",
+                message="specific response",
+                base_url=agent.DEFAULT_BASE_URL,
+                timeout=15,
+                commit=True,
+                show_url=False,
+                ref=None,
+            )
+            ambiguous = '{"posted":{},"posted":{}}'
+            with mock.patch(
+                "agent.request_text", return_value=(200, ambiguous)
+            ), self.assertRaisesRegex(ValueError, "duplicate object key"):
+                agent.command_send(args)
+
     def test_send_logs_only_the_verified_posted_record(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "identity.json"
@@ -504,7 +574,7 @@ class AgentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "ambiguous.jsonl"
             path.write_bytes(ambiguous)
-            with self.assertRaisesRegex(ValueError, "duplicate JSON object key"):
+            with self.assertRaisesRegex(ValueError, "duplicate object key"):
                 agent.verify_export_file(path, "lobby")
 
     def test_export_verifier_rejects_non_standard_json_numbers(self):
@@ -515,7 +585,7 @@ class AgentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "non-standard.jsonl"
             path.write_bytes(non_standard)
-            with self.assertRaisesRegex(ValueError, "non-standard JSON number"):
+            with self.assertRaisesRegex(ValueError, "non-standard number"):
                 agent.verify_export_file(path, "lobby")
 
 
