@@ -14,8 +14,10 @@ import json
 import os
 import re
 import stat
+import sqlite3
 import sys
 import time
+import tempfile
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -114,7 +116,7 @@ def public_key_from_did(did):
 def generate_identity(key_file):
     key_file = Path(key_file)
     if key_file.exists():
-        raise FileExistsError("identity already exists: {}".format(key_file))
+        raise FileExistsError("identity already exists")
     key_file.parent.mkdir(parents=True, exist_ok=True)
     private_key = ed25519.Ed25519PrivateKey.generate()
     raw_private = private_key.private_bytes(
@@ -126,20 +128,17 @@ def generate_identity(key_file):
     payload = json.dumps(
         {"version": 1, "did": did, "private_key_hex": raw_private.hex()}, indent=2
     ) + "\n"
-    temporary = key_file.with_name(key_file.name + ".tmp")
-    fd = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    fd, temporary_name = tempfile.mkstemp(prefix=".identity-", dir=str(key_file.parent))
+    temporary = Path(temporary_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(str(temporary), str(key_file))
-    except Exception:
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
-        raise
+        # Atomic no-clobber publication: a concurrently created identity wins.
+        os.link(str(temporary), str(key_file), follow_symlinks=False)
+    finally:
+        temporary.unlink()
     return private_key, did
 
 
@@ -393,11 +392,31 @@ def reject_json_constant(value):
 
 
 def strict_json_loads(text):
-    return json.loads(
-        text,
-        object_pairs_hook=strict_json_object,
-        parse_constant=reject_json_constant,
-    )
+    depth = 0
+    quoted = escaped = False
+    for character in text:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                quoted = False
+        elif character == '"':
+            quoted = True
+        elif character in "[{":
+            depth += 1
+            if depth > 32:
+                raise ValueError("JSON nesting exceeds the 32-level safety limit")
+        elif character in "]}":
+            depth -= 1
+    try:
+        return json.loads(
+            text, object_pairs_hook=strict_json_object,
+            parse_constant=reject_json_constant,
+        )
+    except RecursionError:
+        raise ValueError("JSON nesting exceeds the safety limit") from None
 
 
 def parse_export_record(raw_line):
@@ -520,7 +539,7 @@ def request_text(url, timeout=15):
 
 def command_init(args):
     _, did = generate_identity(args.key_file)
-    print("Identity created: {}".format(args.key_file))
+    print("Identity created locally")
     print("DID: {}".format(did))
     print("Back up the identity file securely; never share or commit it.")
 
@@ -573,12 +592,14 @@ def command_send(args):
     query = {"format": "json"}
     if follow_up_ref:
         query["ref"] = follow_up_ref
-    status, body = request_text(
-        url + "?" + urllib.parse.urlencode(query), args.timeout
-    )
-    record, reverified = verify_posted_record(
-        private_key.public_key(), room, did, nonce, text, signature,
-        strict_json_loads(body),
+    from delivery import deliver
+    status, record, reverified = deliver(
+        args.key_file, args.base_url, room, did, nonce, text,
+        lambda: request_text(url + "?" + urllib.parse.urlencode(query), args.timeout),
+        lambda body: verify_posted_record(
+            private_key.public_key(), room, did, nonce, text, signature,
+            strict_json_loads(body),
+        ),
     )
     print("Signed message broadcast (HTTP {})".format(status))
     print("Stored sequence: {}".format(record["seq"]))
@@ -633,6 +654,16 @@ def parser():
     verify_parser.add_argument("--room", required=True)
     verify_parser.add_argument("export_file", type=Path)
     verify_parser.set_defaults(func=command_verify_export)
+    from delivery import command_reconcile, command_receipt, command_outbox
+    outbox = commands.add_parser("outbox", help="list delivery IDs and states without message contents")
+    outbox.set_defaults(func=command_outbox)
+    reconcile = commands.add_parser("reconcile", help="resolve an unknown send from a local export; never resend")
+    reconcile.add_argument("--room", required=True)
+    reconcile.add_argument("export_file", type=Path)
+    reconcile.set_defaults(func=command_reconcile)
+    receipt = commands.add_parser("receipt", help="print a saved, independently verifiable public receipt")
+    receipt.add_argument("delivery_id")
+    receipt.set_defaults(func=command_receipt)
     return result
 
 
@@ -640,7 +671,10 @@ def main():
     args = parser().parse_args()
     try:
         args.func(args)
-    except (OSError, ValueError, KeyError, json.JSONDecodeError, HTTPStatusError) as error:
+    except (OSError, sqlite3.Error):
+        print("error: local file or network operation failed; delivery may be unknown", file=sys.stderr)
+        return 1
+    except (ValueError, KeyError, json.JSONDecodeError, HTTPStatusError) as error:
         print("error: {}".format(error), file=sys.stderr)
         return 1
     return 0

@@ -16,3 +16,5 @@ flop_agent_identity.json.*
 *.jsonl
 .env
 .env.*
+.agent-state/
+.identity-*

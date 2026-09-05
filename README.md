@@ -154,6 +154,13 @@ Technocore 会在同一房间短时间收到过多规范化相同文本时返回
 
 ## 测试
 
+完整提交前检查使用 `python3 -B workflow.py`。扫描器错误会阻止发布；新提交产生后
+再运行 `python3 -B audit.py` 以覆盖作者元数据。流程、未知发送状态与历史扫描更正见
+[OPERATIONS.md](OPERATIONS.md)。
+
+发送现在先保存本地状态；超时后不会自动重发。使用 `reconcile` 从导出核对待确认消息，
+使用 `receipt` 导出已确认的完整签名回执。未找到记录不能证明发送失败。
+
 ```bash
 python -m unittest -v
 ```
