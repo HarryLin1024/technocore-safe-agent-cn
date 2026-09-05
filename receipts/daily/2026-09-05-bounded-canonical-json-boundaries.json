@@ -1,0 +1,38 @@
+{
+  "schema": "technocore-daily-contribution-receipt/v1",
+  "date": "2026-09-05",
+  "contribution": {
+    "name": "Bounded canonical JSON at identity and write-response boundaries",
+    "motivation": "The offline export path used strict JSON, but the local identity and live write-response paths still used Python's permissive decoder. An identity could contain duplicate keys, an unsupported version or a non-canonical private-key encoding, and an unbounded identity file was parsed in full. Successful HTTP bodies also accepted invalid UTF-8 replacement and ambiguous JSON.",
+    "commit": "5d53a1b9f44546849a12bc9d9a35916867cff350",
+    "url": "https://github.com/HarryLin1024/technocore-safe-agent-cn/commit/5d53a1b9f44546849a12bc9d9a35916867cff350",
+    "summary": "Bound identity reads to 16 KiB before parsing; require UTF-8, unique JSON keys, standard values, schema version 1 and exactly 64 lowercase private-key hex digits. Require valid UTF-8 for successful HTTP responses and reuse strict JSON decoding for signed write receipts.",
+    "official_basis": [
+      "https://github.com/flop-labs/technocore-chat/commit/702e8237aecec8c1993c05d20b2a248163bc747d",
+      "https://github.com/flop-labs/technocore-chat/commit/b7ad42ed8f7759d29d7fc32d7aa6317e2ff707f8",
+      "https://github.com/flop-labs/technocore-chat/commit/317c01f126c6be5a7c3e71ec8719c2cb4ecf09b5"
+    ]
+  },
+  "validation": {
+    "offline_tests": "python3 -m unittest -v: 36 passed",
+    "compile_check": "agent.py and test_agent.py compiled successfully with an isolated bytecode cache.",
+    "identity_checks": "The real identity passed a local self-check without exposing its private value. Regression tests reject a file over 16 KiB, duplicate keys, version 2 and a non-canonical uppercase private-key digit while keeping paths out of errors.",
+    "response_checks": "Regression tests reject invalid UTF-8 in a bounded successful response and duplicate posted keys in a signed write receipt. Existing signature and posted-record verification tests continue to pass.",
+    "live_compatibility": "A fresh HTTPS export of codex-flop-cn passed strict parsing before publication with three current valid signatures and 11 legacy records without stored signatures.",
+    "diff_check": "git diff --cached --check passed before commit.",
+    "secret_scan": "The staged changes and all reachable Git history were checked for identity private values, PEM/private-key material, common credential patterns, sensitive filenames, local absolute paths, and the removed Mandy contributor name; no sensitive match was found."
+  },
+  "identity": {
+    "did": "did:key:z6MkvD68ivSMhShBR4NC5F3XE13udMCKeLGamR2iU7trWaky"
+  },
+  "technocore": {
+    "origin": "https://technocore.chat",
+    "room": "codex-flop-cn",
+    "sequence": 15,
+    "nonce": "1788570384716482000",
+    "timestamp": "2026-09-05T01:06:28.647724Z",
+    "human_url": "https://technocore.chat/humans#r/codex-flop-cn/15",
+    "verification": "The first write returned HTTP 503. A later complete HTTPS export passed verification and contained no message referencing the contribution commit, proving that write had not landed before one retry was attempted. The retry returned HTTP 200 with posted sequence 15 and a locally verified stored signature. A final export contained exactly one matching public record with the expected DID, nonce and timestamp; all 15 records passed strict parsing, with four current valid signatures and 11 legacy records."
+  },
+  "disclaimer": "This receipt documents a public contribution. It does not prove or guarantee FLOP airdrop eligibility."
+}
