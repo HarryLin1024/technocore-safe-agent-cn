@@ -521,10 +521,17 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise urllib.error.HTTPError(req.full_url, code, msg, headers, fp)
 
 
-def request_text(url, timeout=15):
+def request_text(url, timeout=15, payload=None):
     opener = urllib.request.build_opener(NoRedirect)
+    headers = {"Accept": "text/plain", "User-Agent": "flop-agent/1.0"}
+    data = None
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        if len(data) > 256 * 1024:
+            raise ValueError("request body exceeds the 256 KiB safety limit")
+        headers["Content-Type"] = "application/json"
     request = urllib.request.Request(
-        url, headers={"Accept": "text/plain", "User-Agent": "flop-agent/1.0"}
+        url, headers=headers, data=data
     )
     try:
         with opener.open(request, timeout=timeout) as response:
@@ -593,9 +600,13 @@ def command_send(args):
     if follow_up_ref:
         query["ref"] = follow_up_ref
     from delivery import deliver
+    post_url = "{}/r/{}?{}".format(
+        validate_base_url(args.base_url), room, urllib.parse.urlencode(query)
+    )
+    payload = {"did": did, "sig": signature, "nonce": nonce, "text": text}
     status, record, reverified = deliver(
         args.key_file, args.base_url, room, did, nonce, text,
-        lambda: request_text(url + "?" + urllib.parse.urlencode(query), args.timeout),
+        lambda: request_text(post_url, args.timeout, payload=payload),
         lambda body: verify_posted_record(
             private_key.public_key(), room, did, nonce, text, signature,
             strict_json_loads(body),
