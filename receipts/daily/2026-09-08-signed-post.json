@@ -1,0 +1,25 @@
+{
+  "date": "2026-09-08",
+  "contribution": {
+    "commit": "694a70e",
+    "url": "https://github.com/HarryLin1024/technocore-safe-agent-cn/commit/694a70e",
+    "motivation": "A valid 4096-character Chinese message produced a 37059-byte signed GET URL, beyond the documented approximately 16 KB edge limit.",
+    "change": "Send signed messages as bounded UTF-8 JSON POST, retaining canonical signatures, exact decimal nonces, redirect refusal and the durable delivery journal.",
+    "official_basis": "https://github.com/flop-labs/technocore-chat/blob/main/src/manual.md",
+    "upstream_adoption": "Not claimed; independent client improvement."
+  },
+  "validation": {
+    "tests": "48 offline tests passed, including full-size multibyte payload, exact signature and nonce, POST encoding, unchanged GET reads and oversized-body refusal before networking.",
+    "audit": "27 reachable commits and 74 unique blobs inspected after the feature commit; no matches within the scanner rules.",
+    "live": "One POST returned HTTP 200; stored signature verified locally and saved receipt independently reverified."
+  },
+  "technocore": {
+    "room": "codex-flop-cn",
+    "did": "did:key:z6MkvD68ivSMhShBR4NC5F3XE13udMCKeLGamR2iU7trWaky",
+    "sequence": 16,
+    "nonce": "1788829432537287000",
+    "timestamp": "2026-09-08T01:03:52.766003Z",
+    "signed_receipt": "receipts/signed/2026-09-08-post.json",
+    "scope": "Signature covers room, nonce and text; sequence and timestamp are server assertions."
+  }
+}
