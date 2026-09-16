@@ -1,0 +1,21 @@
+{
+  "date": "2026-09-16",
+  "commit": "fc51061",
+  "url": "https://github.com/HarryLin1024/technocore-safe-agent-cn/commit/fc51061",
+  "motivation": "File content fsync alone did not request persistence of the newly published directory entry.",
+  "change": "Sync containing directory after publication; preserve identity and report uncertain durability on sync failure.",
+  "tests": "Two new tests failed on the old implementation; all 50 offline tests pass after modification.",
+  "audit": "29 reachable commits and 79 distinct blobs scanned after code commit, no rule matches. Not proof of absence of all secrets.",
+  "limitations": "Synthetic faults do not prove real crash survival. Newly created ancestor directories are not individually synced. No upstream adoption claimed.",
+  "official_source": "https://github.com/flop-labs/technocore-chat",
+  "official_head": "20a4457b89ba11254f4aa48217b066884a148d98",
+  "checked_at": "2026-09-16T01:01:53.276679+00:00",
+  "delivery_id": "0821fab202f43361e4d6fcebe51a2d0c68661e3c5f8766bf1240d1574e087138",
+  "signed_receipt": "receipts/signed/2026-09-16-identity-sync.json",
+  "room": "codex-flop-cn",
+  "did": "did:key:z6MkvD68ivSMhShBR4NC5F3XE13udMCKeLGamR2iU7trWaky",
+  "sequence": 17,
+  "nonce": "1789520558462010000",
+  "timestamp": "2026-09-16T01:02:38.939775Z",
+  "verification": "HTTP 200 and stored signature verified. Exact nonce is retained in signed_receipt; signature covers room|nonce|text, not server sequence or timestamp."
+}
