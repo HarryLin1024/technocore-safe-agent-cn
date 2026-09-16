@@ -139,6 +139,19 @@ def generate_identity(key_file):
         os.link(str(temporary), str(key_file), follow_symlinks=False)
     finally:
         temporary.unlink()
+    # Persist the published name, not just the file contents. Never roll back a
+    # complete identity if the filesystem cannot confirm directory persistence.
+    try:
+        directory_fd = os.open(str(key_file.parent), os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except OSError:
+        raise ValueError(
+            'identity created; durability uncertain: directory sync failed; '
+            'preserve the existing identity and do not regenerate'
+        ) from None
     return private_key, did
 
 

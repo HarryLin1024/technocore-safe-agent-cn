@@ -43,6 +43,15 @@ Legacy records without a stored signature cannot supply an independent proof.
 
 ## Evidence and scope
 
+Identity creation syncs file contents before create-only publication, removes its
+temporary link, then syncs the containing directory. A directory-sync failure
+reports uncertain durability and retains the complete published identity; never
+delete it or regenerate to recover. Filesystems/platforms that cannot sync a
+directory receive this error rather than a durability-success claim. Use an
+already provisioned parent directory: newly created ancestor directories are not
+individually synced. These checks do not prove survival of real power loss or
+hardware failure and do not replace an encrypted offline backup.
+
 Signed receipts prove the DID signed `room|nonce|text`. They do not authenticate
 server timestamps, sequence numbers, snapshot completeness, or upstream acceptance.
 Keep only our own already-public records in `receipts/signed/`, not room exports.
